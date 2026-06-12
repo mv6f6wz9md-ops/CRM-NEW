@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ClientOS">
+<title>ClientOS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html{background:#0d0f14}
+  body{margin:0;padding:0;background:#0d0f14;font-family:'DM Sans','Segoe UI',sans-serif;
+    overscroll-behavior:none;-webkit-overflow-scrolling:touch}
+  select,input,button,textarea{font-family:inherit}
+  ::-webkit-scrollbar{width:4px}
+  ::-webkit-scrollbar-thumb{background:#252d3d;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,Fragment}=React;
+
+const C={bg:"#0d0f14",surface:"#161a23",card:"#1c2130",border:"#252d3d",
+  accent:"#4f8ef7",accentDim:"#1a2f5e",green:"#34c47c",amber:"#f5a623",
+  red:"#e05c5c",muted:"#5a6480",text:"#e8eaf2",textSub:"#8b93b0"};
+const STATUS_C={"Aktiv":C.green,"In Bearbeitung":C.accent,"Wartend":C.amber,"Abgeschlossen":C.muted};
+const PRIO_C={"Hoch":C.red,"Mittel":C.amber,"Niedrig":C.green};
+const DOC_TYPES={"Angebot":"Angebot","AB":"Auftragsbestätigung","Rechnung":"Rechnung"};
+const DOC_PREFIX={"Angebot":"ANG","AB":"AB","Rechnung":"RECHN"};
+const DOC_GREEN="#2d6a2d";
+
+const uid=()=>Math.random().toString(36).slice(2,9);
+const today=()=>new Date().toLocaleDateString("de-DE");
+const fmt=v=>parseFloat(v||0).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function lsGet(key,fallback){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
+function lsSet(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
+
+function nextDocNumber(docs,type){
+  const year=new Date().getFullYear();
+  const prefix=DOC_PREFIX[type]||type;
+  const existing=docs.filter(d=>d.type===type&&d.nr&&d.nr.startsWith(prefix+"-"+year))
+    .map(d=>parseInt(d.nr.split("-").pop())||0);
+  const max=existing.length>0?Math.max(...existing):0;
+  return `${prefix}-${year}-${String(max+1).padStart(4,"0")}`;
+}
+
+const DEF_CONTACTS=[
+  {id:uid(),name:"Maria Hoffmann",company:"TechVision GmbH",email:"m.hoffmann@techvision.de",phone:"+49 89 1234567",status:"Aktiv",notes:[]},
+  {id:uid(),name:"Klaus Berger",company:"Infraplan AG",email:"k.berger@infraplan.de",phone:"+49 40 9876543",status:"In Bearbeitung",notes:[]},
+  {id:uid(),name:"Sophia Meier",company:"DataFlow Systems",email:"s.meier@dataflow.io",phone:"+49 30 5551234",status:"Aktiv",notes:[]},
+];
+const DEF_TASKS=[
+  {id:uid(),title:"Angebot überarbeiten",contact:"Maria Hoffmann",priority:"Hoch",due:"12.06.2026",done:false},
+  {id:uid(),title:"Kickoff-Meeting planen",contact:"Klaus Berger",priority:"Mittel",due:"15.06.2026",done:false},
+  {id:uid(),title:"Rechnung prüfen",contact:"Sophia Meier",priority:"Niedrig",due:"20.06.2026",done:true},
+];
+const DEF_ACT=[
+  {id:uid(),type:"📞",text:"Anruf mit Maria Hoffmann — Projektstatus besprochen",date:"05.06.2026"},
+  {id:uid(),type:"📧",text:"E-Mail an Klaus Berger — Angebot gesendet",date:"04.06.2026"},
+  {id:uid(),type:"📝",text:"Notiz zu Sophia Meier hinzugefügt",date:"03.06.2026"},
+];
+const DEF_SETTINGS={firma:"",inhaber:"",strasse:"",plz:"",ort:"",email:"",telefon:"",bank:"",iban:"",bic:"",steuernr:"",ustid:"",logo:"",agb:"Materialkosten werden nach tatsächlichem Aufwand berechnet, sofern im Angebot nichts anderes vereinbart wurde.\nBeschaffungs- und Lieferkosten können gesondert in Rechnung gestellt werden.\n\nGemäß § 19 UStG wird keine Umsatzsteuer berechnet."};
+
+// ── Atoms ─────────────────────────────────────────────────────────────────────
+function Badge({label,color}){return <span style={{background:color+"22",color,border:`1px solid ${color}44`,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:700}}>{label}</span>;}
+function Btn({children,onClick,variant="primary",full,disabled,style}){
+  const v={primary:{background:C.accent,color:"#fff",border:"none"},ghost:{background:"transparent",color:C.textSub,border:`1px solid ${C.border}`},danger:{background:C.red+"22",color:C.red,border:`1px solid ${C.red}44`}};
+  return <button onClick={onClick} disabled={disabled} style={{...v[variant],borderRadius:10,padding:"13px 20px",fontSize:15,fontWeight:700,fontFamily:"inherit",cursor:disabled?"default":"pointer",width:full?"100%":undefined,display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:disabled?.6:1,...style}}>{children}</button>;
+}
+function Field({label,value,onChange,placeholder}){
+  return(<div style={{display:"flex",flexDirection:"column",gap:5}}>
+    {label&&<label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>{label}</label>}
+    <input value={value} onChange={onChange} placeholder={placeholder} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none",width:"100%"}}/>
+  </div>);
+}
+function Sheet({open,onClose,title,children}){
+  if(!open) return null;
+  return(<div style={{position:"fixed",inset:0,zIndex:200,background:C.bg,display:"flex",flexDirection:"column",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+    <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,paddingTop:"calc(env(safe-area-inset-top) + 65px)",paddingBottom:"12px",paddingLeft:"16px",paddingRight:"16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10,flexShrink:0}}>
+      <span style={{fontWeight:800,fontSize:17,color:C.text,flex:1,marginRight:12}}>{title}</span>
+      <button onClick={onClose} style={{background:C.card,border:`1px solid ${C.border}`,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,padding:"9px 16px",borderRadius:10,whiteSpace:"nowrap",flexShrink:0}}>✕ Schließen</button>
+    </div>
+    <div style={{padding:"20px 16px 80px"}}>{children}</div>
+  </div>);
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard({contacts,tasks,activities}){
+  const open=tasks.filter(t=>!t.done);
+  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      {[{label:"Kontakte",val:contacts.length,icon:"👤",color:C.accent},{label:"Offen",val:open.length,icon:"⏳",color:C.amber},{label:"Erledigt",val:tasks.length-open.length,icon:"✅",color:C.green},{label:"Aktivitäten",val:activities.length,icon:"📋",color:C.muted}].map(s=>(
+        <div key={s.label} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 14px"}}>
+          <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
+          <div style={{fontSize:28,fontWeight:900,color:s.color}}>{s.val}</div>
+          <div style={{fontSize:12,color:C.textSub,marginTop:2}}>{s.label}</div>
+        </div>
+      ))}
+    </div>
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16}}>
+      <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:.5}}>Offene Aufgaben</div>
+      {open.length===0&&<div style={{color:C.muted,fontSize:14}}>Alles erledigt 🎉</div>}
+      {open.slice(0,4).map(t=>(
+        <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+          <div><div style={{color:C.text,fontWeight:600,fontSize:14}}>{t.title}</div><div style={{color:C.muted,fontSize:12,marginTop:2}}>{t.contact}{t.due?` · ${t.due}`:""}</div></div>
+          <Badge label={t.priority} color={PRIO_C[t.priority]}/>
+        </div>
+      ))}
+    </div>
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16}}>
+      <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:.5}}>Letzte Aktivitäten</div>
+      {activities.slice(0,4).map(a=>(
+        <div key={a.id} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:`1px solid ${C.border}`}}>
+          <span style={{fontSize:18}}>{a.type}</span>
+          <div><div style={{color:C.text,fontSize:13}}>{a.text}</div><div style={{color:C.muted,fontSize:11,marginTop:2}}>{a.date}</div></div>
+        </div>
+      ))}
+    </div>
+  </div>);
+}
+
+// ── Contacts ──────────────────────────────────────────────────────────────────
+function Contacts({contacts,setContacts,setActivities}){
+  const [sheet,setSheet]=useState(null);
+  const [form,setForm]=useState({name:"",company:"",email:"",phone:"",status:"Aktiv"});
+  const [noteText,setNoteText]=useState("");
+  const f=v=>e=>setForm(p=>({...p,[v]:e.target.value}));
+  const save=()=>{if(!form.name.trim())return;const c={...form,id:uid(),notes:[]};setContacts(p=>[c,...p]);setActivities(p=>[{id:uid(),type:"👤",text:`Kontakt ${c.name} hinzugefügt`,date:today()},...p]);setSheet(null);setForm({name:"",company:"",email:"",phone:"",status:"Aktiv"});};
+  const addNote=contact=>{if(!noteText.trim())return;const note={id:uid(),text:noteText,date:today()};setContacts(p=>p.map(c=>c.id===contact.id?{...c,notes:[note,...c.notes]}:c));setActivities(p=>[{id:uid(),type:"📝",text:`Notiz zu ${contact.name}`,date:today()},...p]);setNoteText("");};
+  const del=id=>{setContacts(p=>p.filter(c=>c.id!==id));setSheet(null);};
+  const sel=sheet&&sheet!=="add"?contacts.find(c=>c.id===sheet.id):null;
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <Btn onClick={()=>setSheet("add")} full>+ Neuer Kontakt</Btn>
+    {contacts.map(c=>(<div key={c.id} onClick={()=>setSheet(c)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+      <div><div style={{fontWeight:700,fontSize:15,color:C.text}}>{c.name}</div><div style={{fontSize:13,color:C.textSub,marginTop:2}}>{c.company}</div></div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}><Badge label={c.status} color={STATUS_C[c.status]}/><div style={{fontSize:11,color:C.muted}}>{c.notes.length} Notiz{c.notes.length!==1?"en":""}</div></div>
+    </div>))}
+    <Sheet open={sheet==="add"} onClose={()=>setSheet(null)} title="Neuer Kontakt">
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Field label="Name *" value={form.name} onChange={f("name")} placeholder="Max Mustermann"/>
+        <Field label="Firma" value={form.company} onChange={f("company")} placeholder="Mustermann GmbH"/>
+        <Field label="E-Mail" value={form.email} onChange={f("email")} placeholder="max@example.de"/>
+        <Field label="Telefon" value={form.phone} onChange={f("phone")} placeholder="+49 ..."/>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Status</label>
+          <select value={form.status} onChange={f("status")} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>{Object.keys(STATUS_C).map(s=><option key={s}>{s}</option>)}</select>
+        </div>
+        <Btn onClick={save} full>Speichern</Btn>
+      </div>
+    </Sheet>
+    <Sheet open={!!sel} onClose={()=>setSheet(null)} title={sel?.name||""}>
+      {sel&&(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Badge label={sel.status} color={STATUS_C[sel.status]}/>
+        {sel.company&&<div style={{color:C.textSub,fontSize:14}}>🏢 {sel.company}</div>}
+        {sel.email&&<a href={`mailto:${sel.email}`} style={{color:C.accent,fontSize:14,textDecoration:"none"}}>📧 {sel.email}</a>}
+        {sel.phone&&<a href={`tel:${sel.phone}`} style={{color:C.accent,fontSize:14,textDecoration:"none"}}>📞 {sel.phone}</a>}
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14}}>
+          <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:10,textTransform:"uppercase"}}>Notizen</div>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={noteText} onChange={e=>setNoteText(e.target.value)} placeholder="Neue Notiz…" style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,padding:"11px 13px",outline:"none"}}/>
+            <button onClick={()=>addNote(sel)} style={{background:C.accent,border:"none",borderRadius:10,color:"#fff",fontWeight:700,fontSize:20,padding:"0 16px",cursor:"pointer"}}>+</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {sel.notes.length===0&&<div style={{color:C.muted,fontSize:13}}>Noch keine Notizen.</div>}
+            {sel.notes.map(n=>(<div key={n.id} style={{background:C.surface,borderRadius:10,padding:"10px 13px"}}><div style={{color:C.text,fontSize:13}}>{n.text}</div><div style={{color:C.muted,fontSize:11,marginTop:4}}>{n.date}</div></div>))}
+          </div>
+        </div>
+        <Btn onClick={()=>del(sel.id)} variant="danger" full>Kontakt löschen</Btn>
+      </div>)}
+    </Sheet>
+  </div>);
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+function Tasks({tasks,setTasks,contacts,setActivities}){
+  const [sheet,setSheet]=useState(false);
+  const [form,setForm]=useState({title:"",contact:contacts[0]?.name||"",priority:"Mittel",due:""});
+  const f=v=>e=>setForm(p=>({...p,[v]:e.target.value}));
+  const save=()=>{if(!form.title.trim())return;const t={...form,id:uid(),done:false};setTasks(p=>[t,...p]);setActivities(p=>[{id:uid(),type:"✅",text:`Aufgabe "${t.title}" erstellt`,date:today()},...p]);setSheet(false);setForm({title:"",contact:contacts[0]?.name||"",priority:"Mittel",due:""});};
+  const toggle=id=>setTasks(p=>p.map(t=>t.id===id?{...t,done:!t.done}:t));
+  const del=id=>setTasks(p=>p.filter(t=>t.id!==id));
+  const open=tasks.filter(t=>!t.done);const done=tasks.filter(t=>t.done);
+  const Row=({t})=>(<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",opacity:t.done?.7:1,display:"flex",gap:12,alignItems:"center"}}>
+    <div onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:`2px solid ${t.done?C.green:C.border}`,background:t.done?C.green+"33":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,fontSize:14,color:C.green}}>{t.done?"✓":""}</div>
+    <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontWeight:600,fontSize:14,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div><div style={{color:C.muted,fontSize:12,marginTop:2}}>{t.contact}{t.due?` · ${t.due}`:""}</div></div>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}><Badge label={t.priority} color={PRIO_C[t.priority]}/><button onClick={()=>del(t.id)} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:0}}>🗑</button></div>
+  </div>);
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <Btn onClick={()=>setSheet(true)} full>+ Neue Aufgabe</Btn>
+    <div style={{fontSize:12,color:C.textSub,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>Offen ({open.length})</div>
+    {open.map(t=><Row key={t.id} t={t}/>)}
+    {!open.length&&<div style={{color:C.muted,fontSize:14,padding:"8px 0"}}>Keine offenen Aufgaben 🎉</div>}
+    {done.length>0&&<><div style={{fontSize:12,color:C.textSub,fontWeight:700,textTransform:"uppercase",letterSpacing:.5,marginTop:8}}>Erledigt ({done.length})</div>{done.map(t=><Row key={t.id} t={t}/>)}</>}
+    <Sheet open={sheet} onClose={()=>setSheet(false)} title="Neue Aufgabe">
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Field label="Titel *" value={form.title} onChange={f("title")} placeholder="Aufgabe beschreiben…"/>
+        <Field label="Fällig am" value={form.due} onChange={f("due")} placeholder="20.06.2026"/>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Kontakt</label>
+          <select value={form.contact} onChange={f("contact")} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>{contacts.map(c=><option key={c.id}>{c.name}</option>)}</select>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Priorität</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{Object.keys(PRIO_C).map(p=>(<button key={p} onClick={()=>setForm(f=>({...f,priority:p}))} style={{background:form.priority===p?PRIO_C[p]+"33":C.surface,border:`2px solid ${form.priority===p?PRIO_C[p]:C.border}`,borderRadius:10,color:form.priority===p?PRIO_C[p]:C.textSub,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"11px 0",cursor:"pointer"}}>{p}</button>))}</div>
+        </div>
+        <Btn onClick={save} full>Speichern</Btn>
+      </div>
+    </Sheet>
+  </div>);
+}
+
+// ── Activity ──────────────────────────────────────────────────────────────────
+function Activity({activities,setActivities}){
+  const [text,setText]=useState("");const [type,setType]=useState("📝");
+  const ICONS=["📞","📧","📝","🤝","📅"];
+  const add=()=>{if(!text.trim())return;setActivities(p=>[{id:uid(),type,text,date:today()},...p]);setText("");};
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16}}>
+      <div style={{display:"flex",gap:8,marginBottom:12,justifyContent:"center"}}>{ICONS.map(i=>(<button key={i} onClick={()=>setType(i)} style={{background:type===i?C.accent+"33":"transparent",border:`2px solid ${type===i?C.accent:C.border}`,borderRadius:10,padding:"8px 10px",fontSize:20,cursor:"pointer"}}>{i}</button>))}</div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Aktivität beschreiben…" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/>
+        <button onClick={add} style={{background:C.accent,border:"none",borderRadius:10,color:"#fff",fontWeight:700,fontSize:20,padding:"0 18px",cursor:"pointer"}}>+</button>
+      </div>
+    </div>
+    {activities.map(a=>(<div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",display:"flex",gap:12,alignItems:"flex-start"}}><span style={{fontSize:22}}>{a.type}</span><div><div style={{color:C.text,fontSize:14}}>{a.text}</div><div style={{color:C.muted,fontSize:12,marginTop:4}}>{a.date}</div></div></div>))}
+  </div>);
+}
+
+// ── Doc PDF generation ────────────────────────────────────────────────────────
+function generateDocHTML(doc,contacts,settings){
+  const c=contacts.find(x=>x.name===doc.contact)||{};
+  const s=settings||{};
+  const pos=doc.positionen||[];
+  const tot=pos.reduce((sum,p)=>sum+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+  const typLabel=DOC_TYPES[doc.type]||doc.type;
+  const logoHtml=s.logo?`
+    <img src="${s.logo}" style="position:absolute;left:0;top:0;height:100%;width:240px;object-fit:cover;object-position:center;display:block;">
+    <div style="position:absolute;left:0;top:0;height:100%;width:240px;background:linear-gradient(to right,transparent 55%,${DOC_GREEN} 100%);"></div>
+    <div style="width:220px;flex-shrink:0;"></div>`:"";
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#1a1a1a;background:#fff}
+.header{background:${DOC_GREEN};color:#fff;padding:22px 28px;display:flex;justify-content:space-between;align-items:center;min-height:100px;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.doc-title{font-size:30px;font-weight:900;text-transform:uppercase;color:#fff;letter-spacing:1px;text-align:right;position:relative;z-index:2}
+.doc-meta{text-align:right;font-size:11px;color:rgba(255,255,255,.88);margin-top:5px;line-height:1.8;position:relative;z-index:2}
+.body{padding:24px 28px}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;padding-bottom:18px;border-bottom:2px solid #eee}
+.party-label{font-size:9px;font-weight:800;text-transform:uppercase;color:${DOC_GREEN};letter-spacing:.8px;margin-bottom:4px}
+.party-name{font-size:14px;font-weight:800;margin-bottom:3px}
+.party-detail{font-size:11px;color:#555;line-height:1.6}
+table{width:100%;border-collapse:collapse;margin-bottom:16px}
+thead tr{background:${DOC_GREEN};color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+th{padding:8px 10px;font-size:10px;text-transform:uppercase;font-weight:700;text-align:left}
+th.r{text-align:right}
+td{padding:9px 10px;border-bottom:1px solid #f0f0f0;font-size:12px}
+td.r{text-align:right;white-space:nowrap}
+td.b{font-weight:700}
+.sum-table{width:240px;margin-left:auto;margin-bottom:16px}
+.sum-table td{padding:5px 10px;font-size:12px;border:none}
+.sum-total td{background:${DOC_GREEN};color:#fff;font-weight:900;font-size:13px;padding:9px 10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.notiz{background:#f8f8f8;border-left:3px solid ${DOC_GREEN};padding:10px 13px;font-size:11px;color:#444;margin-bottom:20px;line-height:1.5}
+.sig-area{text-align:right;padding:8px 0 16px}
+.sig-line{border-top:1px solid #555;width:170px;margin-left:auto;padding-top:4px;font-size:11px;color:#555}
+.agb-section{border-top:1px solid #eee;padding:14px 0 10px}
+.agb-title{font-size:9px;font-weight:800;text-transform:uppercase;color:${DOC_GREEN};letter-spacing:.5px;margin-bottom:4px}
+.agb-text{font-size:10px;color:#666;line-height:1.5;white-space:pre-line}
+.footer-bar{background:${DOC_GREEN};color:rgba(255,255,255,.92);padding:10px 28px;font-size:10px;text-align:center;letter-spacing:.4px;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.content-wrap{min-height:247mm;display:flex;flex-direction:column;}
+.content-wrap .body{flex:1;}
+@media print{@page{margin:0;size:A4}-webkit-print-color-adjust:exact;print-color-adjust:exact}
+</style></head><body>
+<div class="header">
+  ${logoHtml}
+  <div style="flex:1"></div>
+  <div>
+    <div class="doc-title">${typLabel}</div>
+    <div class="doc-meta">${doc.nr?`Nummer: ${doc.nr}<br>`:""}Datum: ${doc.datum}${doc.faellig?`<br>Fällig am: ${doc.faellig}`:""}</div>
+  </div>
+</div>
+<div class="content-wrap"><div class="body">
+  <div class="parties">
+    <div><div class="party-label">${typLabel} an:</div><div class="party-name">${doc.contact}</div><div class="party-detail">${[c.email,c.company].filter(Boolean).join("<br>")}</div></div>
+    <div><div class="party-label">${typLabel} von:</div><div class="party-name">${s.firma||""}</div><div class="party-detail">${[s.telefon,s.email,s.strasse?(s.strasse+(s.plz||s.ort?", "+s.plz+" "+s.ort:"")):null].filter(Boolean).join("<br>")}</div></div>
+  </div>
+  <table><thead><tr><th style="width:45%">Beschreibung</th><th class="r" style="width:12%">Menge</th><th class="r" style="width:20%">Einzelpreis</th><th class="r" style="width:23%">Gesamtpreis</th></tr></thead>
+  <tbody>${pos.map(p=>{const m=parseFloat(p.menge||1);const ep=parseFloat(p.einzelpreis||p.betrag||0);const gp=m*ep;return`<tr><td>${p.text}</td><td class="r">${m.toLocaleString("de-DE")}</td><td class="r">${fmt(ep)} €</td><td class="r b">${fmt(gp)} €</td></tr>`;}).join("")}</tbody></table>
+  <table class="sum-table"><tbody>
+    <tr><td style="color:#666">Zwischensumme</td><td style="text-align:right">${fmt(tot)} €</td></tr>
+    <tr class="sum-total"><td>Fälliger Gesamtbetrag</td><td style="text-align:right">${fmt(tot)} €</td></tr>
+  </tbody></table>
+  ${doc.notiz?`<div class="notiz">${doc.notiz}</div>`:""}
+  <div class="sig-area"><div style="height:40px"></div><div class="sig-line">${s.inhaber||s.firma||""}</div></div>
+  ${s.agb?`<div class="agb-section"><div class="agb-title">Allgemeine Geschäftsbedingungen</div><div class="agb-text">${s.agb}</div></div>`:""}
+</div></div>
+<div class="footer-bar">VIELEN DANK FÜR IHR VERTRAUEN</div>
+</body></html>`;
+}
+
+// ── DocPreview ────────────────────────────────────────────────────────────────
+function DocPreview({doc,contacts,settings,onBack}){
+  const s=settings||{};
+  const c=contacts.find(x=>x.name===doc.contact)||{};
+  const pos=doc.positionen||[];
+  const tot=pos.reduce((sum,p)=>sum+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+  const typLabel=DOC_TYPES[doc.type]||doc.type;
+  const [generating,setGenerating]=useState(false);
+  const [showHint,setShowHint]=useState(false);
+
+  const doPDF=async()=>{
+    setGenerating(true);
+    try{
+      const frame=document.createElement("iframe");
+      frame.style.cssText="position:fixed;left:-9999px;top:0;width:794px;height:1123px;border:none;background:#fff;";
+      document.body.appendChild(frame);
+      frame.contentDocument.open();
+      frame.contentDocument.write(generateDocHTML(doc,contacts,settings));
+      frame.contentDocument.close();
+      await new Promise(res=>setTimeout(res,1000));
+      const canvas=await html2canvas(frame.contentDocument.body,{
+        scale:1.5,useCORS:true,allowTaint:true,backgroundColor:"#ffffff",
+        width:794,windowWidth:794,logging:false,
+      });
+      document.body.removeChild(frame);
+      const {jsPDF}=window.jspdf;
+      const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+      const pdfW=pdf.internal.pageSize.getWidth();
+      const pdfH=pdf.internal.pageSize.getHeight();
+      const imgH=(canvas.height*pdfW)/canvas.width;
+      const imgData=canvas.toDataURL("image/jpeg",0.95);
+      if(imgH<=pdfH){pdf.addImage(imgData,"JPEG",0,0,pdfW,imgH);}
+      else{let y=0;while(y<imgH){if(y>0)pdf.addPage();pdf.addImage(imgData,"JPEG",0,-y,pdfW,imgH);y+=pdfH;}}
+      const filename=`${DOC_TYPES[doc.type]||doc.type}-${doc.nr||doc.datum}.pdf`;
+      const pdfBlob=pdf.output("blob");
+      const pdfFile=new File([pdfBlob],filename,{type:"application/pdf"});
+      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[pdfFile]})){
+        await navigator.share({files:[pdfFile],title:filename});
+      } else {
+        const url=URL.createObjectURL(pdfBlob);
+        const a=document.createElement("a");a.href=url;a.download=filename;a.click();
+        setTimeout(()=>URL.revokeObjectURL(url),3000);
+      }
+    }catch(e){console.error(e);setShowHint(true);}
+    setGenerating(false);
+  };
+
+  return(<div style={{position:"fixed",inset:0,zIndex:200,background:"#e0e0e0",display:"flex",flexDirection:"column"}}>
+    <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,
+      paddingTop:"calc(env(safe-area-inset-top) + 60px)",
+      paddingBottom:"12px",paddingLeft:"16px",paddingRight:"16px",
+      display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,gap:8}}>
+      <button onClick={onBack} style={{background:C.card,border:`1px solid ${C.border}`,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,padding:"9px 14px",borderRadius:10,whiteSpace:"nowrap"}}>← Zurück</button>
+      <span style={{fontWeight:800,fontSize:15,color:C.text}}>Vorschau</span>
+      <button onClick={doPDF} disabled={generating} style={{background:DOC_GREEN,border:"none",color:"#fff",cursor:generating?"default":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"9px 14px",borderRadius:10,whiteSpace:"nowrap",opacity:generating?.7:1}}>
+        {generating?"⏳ Erstelle…":"📄 Als PDF"}
+      </button>
+    </div>
+
+    {showHint&&(<div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.surface,borderRadius:"20px 20px 0 0",padding:"24px 20px 40px",width:"100%",border:`1px solid ${C.border}`}}>
+        <div style={{fontWeight:800,fontSize:17,color:C.text,marginBottom:12}}>PDF konnte nicht erstellt werden</div>
+        <div style={{fontSize:13,color:C.textSub,lineHeight:1.7,marginBottom:20}}>Bitte versuche es erneut oder öffne die Seite im normalen Safari-Browser.</div>
+        <Btn onClick={()=>setShowHint(false)} full>OK</Btn>
+      </div>
+    </div>)}
+
+    <div style={{flex:1,overflowY:"auto",padding:"12px 8px 40px"}}>
+      <div style={{background:"#fff",borderRadius:6,boxShadow:"0 2px 16px rgba(0,0,0,.2)",margin:"0 auto",overflow:"hidden",fontFamily:"'Helvetica Neue',Arial,sans-serif",fontSize:12,color:"#1a1a1a"}}>
+        <div style={{background:DOC_GREEN,padding:"20px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",minHeight:90,position:"relative",overflow:"hidden"}}>
+          {s.logo&&<><img src={s.logo} alt="Logo" style={{position:"absolute",left:0,top:0,height:"100%",width:200,objectFit:"cover",objectPosition:"center",opacity:1}}/><div style={{position:"absolute",left:0,top:0,height:"100%",width:200,background:`linear-gradient(to right,transparent 55%,${DOC_GREEN} 100%)`,zIndex:1}}/><div style={{width:180,flexShrink:0,position:"relative",zIndex:2}}/></>}
+          <div style={{textAlign:"right",position:"relative",zIndex:2}}>
+            <div style={{fontSize:24,fontWeight:900,textTransform:"uppercase",color:"#fff",letterSpacing:1}}>{typLabel}</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:3,lineHeight:1.7}}>
+              {doc.nr&&<div>Nummer: {doc.nr}</div>}<div>Datum: {doc.datum}</div>{doc.faellig&&<div>Fällig: {doc.faellig}</div>}
+            </div>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,padding:"16px 20px",borderBottom:"2px solid #eee"}}>
+          <div><div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.8,marginBottom:4}}>{typLabel} an:</div><div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{doc.contact}</div><div style={{fontSize:11,color:"#555",lineHeight:1.5}}>{c.email&&<div>{c.email}</div>}{c.company&&<div>{c.company}</div>}</div></div>
+          <div><div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.8,marginBottom:4}}>{typLabel} von:</div><div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{s.firma}</div><div style={{fontSize:11,color:"#555",lineHeight:1.5}}>{s.telefon&&<div>{s.telefon}</div>}{s.email&&<div>{s.email}</div>}{s.strasse&&<div>{s.strasse}{(s.plz||s.ort)?", "+s.plz+" "+s.ort:""}</div>}</div></div>
+        </div>
+        <div style={{padding:"0 20px 16px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"4px 8px",background:DOC_GREEN,color:"#fff",padding:"7px 8px",marginTop:16,borderRadius:"4px 4px 0 0",alignItems:"center"}}>
+            {["Beschreibung","Menge","Einzelpr.","Gesamt"].map((h,i)=>(<div key={h} style={{fontSize:9,fontWeight:800,textTransform:"uppercase",textAlign:i>0?"right":"left"}}>{h}</div>))}
+          </div>
+          {pos.map((p,i)=>{const m=parseFloat(p.menge||1);const ep=parseFloat(p.einzelpreis||p.betrag||0);const gp=m*ep;return(<div key={p.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"4px 8px",padding:"8px",borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa",alignItems:"start"}}>
+            <div style={{fontSize:11,lineHeight:1.4}}>{p.text}</div>
+            <div style={{fontSize:11,textAlign:"right",color:"#555",whiteSpace:"nowrap"}}>{m.toLocaleString("de-DE")}</div>
+            <div style={{fontSize:11,textAlign:"right",color:"#555",whiteSpace:"nowrap"}}>{fmt(ep)} €</div>
+            <div style={{fontSize:11,textAlign:"right",fontWeight:700,whiteSpace:"nowrap"}}>{fmt(gp)} €</div>
+          </div>);})}
+          <div style={{marginTop:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"5px 8px",color:"#666",fontSize:11}}><span>Zwischensumme</span><span style={{whiteSpace:"nowrap"}}>{fmt(tot)} €</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"9px 8px",background:DOC_GREEN,color:"#fff",borderRadius:4,fontWeight:800,fontSize:12,marginTop:2}}><span>Fälliger Gesamtbetrag</span><span style={{whiteSpace:"nowrap",marginLeft:8}}>{fmt(tot)} €</span></div>
+          </div>
+        </div>
+        {doc.notiz&&<div style={{margin:"0 20px 16px",background:"#f8f8f8",borderLeft:`3px solid ${DOC_GREEN}`,padding:"9px 12px",fontSize:11,color:"#444",lineHeight:1.5}}>{doc.notiz}</div>}
+        <div style={{textAlign:"right",padding:"8px 20px 16px"}}><div style={{height:30}}/><div style={{borderTop:"1px solid #555",width:160,marginLeft:"auto",paddingTop:4,fontSize:10,color:"#555"}}>{s.inhaber||s.firma}</div></div>
+        {s.agb&&<div style={{borderTop:"1px solid #eee",padding:"12px 20px",fontSize:10,color:"#666",lineHeight:1.5}}><div style={{fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.5,marginBottom:4,fontSize:9}}>Allgemeine Geschäftsbedingungen</div><div style={{whiteSpace:"pre-line"}}>{s.agb}</div></div>}
+        <div style={{background:DOC_GREEN,color:"rgba(255,255,255,.9)",padding:"10px 20px",fontSize:10,textAlign:"center",letterSpacing:.4,fontWeight:600}}>VIELEN DANK FÜR IHR VERTRAUEN</div>
+      </div>
+    </div>
+  </div>);
+}
+
+// ── Docs ──────────────────────────────────────────────────────────────────────
+function DocsSettings({settings,saveSettings,onClose}){
+  return(<Sheet open={true} onClose={onClose} title="Firmendaten">
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Diese Daten erscheinen auf allen Dokumenten.</div>
+      {[["firma","Firmenname"],["inhaber","Inhaber"],["strasse","Straße & Hausnummer"],["plz","PLZ"],["ort","Ort"],["email","E-Mail"],["telefon","Telefon"],["bank","Bank"],["iban","IBAN"],["bic","BIC"],["steuernr","Steuernummer"],["ustid","USt-ID"]].map(([k,l])=>(
+        <div key={k} style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>{l}</label>
+          <input value={settings[k]||""} onChange={e=>{const v=e.target.value;saveSettings(p=>({...p,[k]:v}));}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/>
+        </div>
+      ))}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Logo</label>
+        {settings.logo&&<img src={settings.logo} alt="Logo" style={{maxHeight:80,maxWidth:160,objectFit:"contain",background:"#fff",borderRadius:8,padding:4}}/>}
+        <label style={{background:C.accent,color:"#fff",borderRadius:10,padding:"13px 16px",fontFamily:"inherit",fontWeight:700,fontSize:15,cursor:"pointer",textAlign:"center",display:"block"}}>
+          📷 Logo aus Galerie wählen
+          <input type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>saveSettings(p=>({...p,logo:ev.target.result}));reader.readAsDataURL(file);}} style={{display:"none"}}/>
+        </label>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Oder Logo-URL</label>
+          <input value={settings.logo&&settings.logo.startsWith("http")?settings.logo:""} onChange={e=>{const v=e.target.value;saveSettings(p=>({...p,logo:v}));}} placeholder="https://..." style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:13,padding:"11px 13px",outline:"none"}}/>
+        </div>
+        {settings.logo&&<button onClick={()=>saveSettings(p=>({...p,logo:""}))} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:10,color:C.muted,fontFamily:"inherit",fontSize:13,padding:"8px",cursor:"pointer"}}>Logo entfernen</button>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>AGB / Fußnoten</label>
+        <textarea value={settings.agb||""} onChange={e=>{const v=e.target.value;saveSettings(p=>({...p,agb:v}));}} rows={5} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,padding:"13px 14px",outline:"none",resize:"none"}}/>
+      </div>
+      <Btn onClick={onClose} full>Speichern & zurück</Btn>
+    </div>
+  </Sheet>);
+}
+
+function NewDocForm({contacts,onSave,onClose,existingDocs}){
+  const initType="Angebot";
+  const [form,setForm]=useState({type:initType,contact:contacts[0]?.name||"",datum:today(),faellig:"",nr:nextDocNumber(existingDocs||[],initType),positionen:[{id:uid(),text:"",menge:"1",einzelpreis:""}],notiz:""});
+  const sf=v=>e=>{const val=e.target.value;setForm(p=>({...p,[v]:val}));};
+  const changeType=t=>setForm(p=>({...p,type:t,nr:nextDocNumber(existingDocs||[],t)}));
+  const addPos=()=>setForm(p=>({...p,positionen:[...p.positionen,{id:uid(),text:"",menge:"1",einzelpreis:""}]}));
+  const delPos=id=>setForm(p=>({...p,positionen:p.positionen.filter(x=>x.id!==id)}));
+  const updatePos=(id,field)=>e=>{const val=e.target.value;setForm(p=>({...p,positionen:p.positionen.map(x=>x.id===id?{...x,[field]:val}:x)}));};
+  const total=form.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||0)),0);
+  return(<Sheet open={true} onClose={onClose} title="Neues Dokument">
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Dokumenttyp</label>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{Object.entries(DOC_TYPES).map(([k,l])=>(<button key={k} onClick={()=>changeType(k)} style={{background:form.type===k?C.accent+"33":C.surface,border:`2px solid ${form.type===k?C.accent:C.border}`,borderRadius:10,color:form.type===k?C.accent:C.textSub,fontFamily:"inherit",fontWeight:700,fontSize:12,padding:"11px 4px",cursor:"pointer"}}>{l}</button>))}</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Kontakt</label>
+        <select value={form.contact} onChange={sf("contact")} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>{contacts.map(c=><option key={c.id}>{c.name}</option>)}</select>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Nummer</label><input value={form.nr} onChange={sf("nr")} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/></div>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Datum</label><input value={form.datum} onChange={sf("datum")} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/></div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Fällig bis</label><input value={form.faellig} onChange={sf("faellig")} placeholder="Bei Erhalt" style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/></div>
+      <div>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:8}}>Positionen</label>
+        {form.positionen.map((p,i)=>{const gp=parseFloat(p.menge||1)*parseFloat(p.einzelpreis||0);return(<div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Position {i+1}</span>{form.positionen.length>1&&<button onClick={()=>delPos(p.id)} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:0}}>✕</button>}</div>
+          <input value={p.text} onChange={updatePos(p.id,"text")} placeholder="Beschreibung" style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:14,padding:"10px 12px",outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div><div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Menge</div><input value={p.menge} onChange={updatePos(p.id,"menge")} inputMode="decimal" style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:14,padding:"10px 8px",outline:"none",textAlign:"center",boxSizing:"border-box"}}/></div>
+            <div><div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Einzelpreis</div><input value={p.einzelpreis} onChange={updatePos(p.id,"einzelpreis")} placeholder="0,00" inputMode="decimal" style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:14,padding:"10px 8px",outline:"none",textAlign:"right",boxSizing:"border-box"}}/></div>
+            <div><div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Gesamt</div><div style={{background:C.border,borderRadius:8,color:C.green,fontWeight:700,fontSize:14,padding:"10px 8px",textAlign:"right"}}>{fmt(gp)} €</div></div>
+          </div>
+        </div>);})}
+        <button onClick={addPos} style={{background:"transparent",border:`1px dashed ${C.border}`,borderRadius:10,color:C.accent,fontFamily:"inherit",fontWeight:600,fontSize:13,padding:"10px",width:"100%",cursor:"pointer"}}>+ Position hinzufügen</button>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:800,color:C.text,fontSize:15}}>Gesamtbetrag</span><span style={{fontWeight:800,color:C.green,fontSize:15}}>{fmt(total)} €</span></div>
+        <div style={{fontSize:11,color:C.muted,marginTop:6}}>Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+        <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Notiz / Zahlungsbedingungen</label>
+        <textarea value={form.notiz} onChange={sf("notiz")} rows={3} placeholder="z.B. Zahlbar innerhalb von 14 Tagen…" style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,padding:"13px 14px",outline:"none",resize:"none"}}/>
+      </div>
+      <Btn onClick={()=>onSave(form)} full>Dokument erstellen</Btn>
+    </div>
+  </Sheet>);
+}
+
+function Docs({contacts}){
+  const [screen,setScreen]=useState(null);
+  const [docs,setDocsRaw]=useState(()=>lsGet("crm:docs",[]));
+  const [settings,setSettingsRaw]=useState(()=>lsGet("crm:settings",DEF_SETTINGS));
+  const saveDocs=val=>{const n=typeof val==="function"?val(docs):val;setDocsRaw(n);lsSet("crm:docs",n);};
+  const saveSettings=val=>{const n=typeof val==="function"?val(settings):val;setSettingsRaw(n);lsSet("crm:settings",n);};
+  const handleSave=form=>{saveDocs(p=>[{...form,id:uid(),created:today()},...p]);setScreen(null);};
+
+  if(screen==="new") return <NewDocForm contacts={contacts} onSave={handleSave} onClose={()=>setScreen(null)} existingDocs={docs}/>;
+  if(screen==="settings") return <DocsSettings settings={settings} saveSettings={saveSettings} onClose={()=>setScreen(null)}/>;
+  if(screen&&screen._preview){const doc=screen;return <DocPreview doc={doc} contacts={contacts} settings={settings} onBack={()=>setScreen(null)}/>;}
+  if(screen&&screen!=="new"&&screen!=="settings"){
+    const doc=screen;
+    const tot=doc.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+    return(<Sheet open={true} onClose={()=>setScreen(null)} title={`${DOC_TYPES[doc.type]||doc.type}${doc.nr?" · "+doc.nr:""}`}>
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}}>
+          {[["Kontakt",doc.contact],["Datum",doc.datum],doc.faellig?["Fällig",doc.faellig]:null,["Erstellt",doc.created]].filter(Boolean).map(([l,v])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.textSub,fontSize:13}}>{l}</span><span style={{color:C.text,fontSize:13,fontWeight:600}}>{v}</span></div>
+          ))}
+        </div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}}>
+          <div style={{fontSize:11,color:C.textSub,fontWeight:700,textTransform:"uppercase",marginBottom:10}}>Positionen</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"6px 10px"}}>
+            {["Beschreibung","Menge","Einzelpreis","Gesamt"].map((h,i)=>(<div key={h} style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",textAlign:i>0?"right":"left",paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{h}</div>))}
+            {doc.positionen.map(p=>{const m=parseFloat(p.menge||1);const ep=parseFloat(p.einzelpreis||p.betrag||0);const gp=m*ep;return(<Fragment key={p.id}>
+              <div style={{color:C.text,fontSize:13,paddingBottom:8,borderBottom:`1px solid ${C.border}`}}>{p.text}</div>
+              <div style={{color:C.textSub,fontSize:13,textAlign:"right",paddingBottom:8,borderBottom:`1px solid ${C.border}`}}>{m.toLocaleString("de-DE")}</div>
+              <div style={{color:C.textSub,fontSize:13,textAlign:"right",paddingBottom:8,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap"}}>{fmt(ep)} €</div>
+              <div style={{color:C.text,fontSize:13,fontWeight:700,textAlign:"right",paddingBottom:8,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap"}}>{fmt(gp)} €</div>
+            </Fragment>);})}
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:12,paddingTop:10,borderTop:`2px solid ${C.border}`}}><span style={{fontWeight:800,color:C.text,fontSize:14}}>Fälliger Gesamtbetrag</span><span style={{fontWeight:800,color:C.green,fontSize:14,whiteSpace:"nowrap"}}>{fmt(tot)} €</span></div>
+        </div>
+        <Btn onClick={()=>setScreen({...doc,_preview:true})} full>👁 Vorschau &amp; PDF</Btn>
+        <Btn onClick={()=>{saveDocs(p=>p.filter(d=>d.id!==doc.id));setScreen(null);}} variant="danger" full>Dokument löschen</Btn>
+      </div>
+    </Sheet>);
+  }
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+      <Btn onClick={()=>setScreen("new")} full>+ Neu</Btn>
+      <Btn onClick={()=>setScreen("settings")} variant="ghost" full>⚙ Firmendaten</Btn>
+    </div>
+    {docs.length===0&&(<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:32,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📄</div><div style={{color:C.textSub,fontSize:14}}>Noch keine Dokumente.</div><div style={{color:C.muted,fontSize:12,marginTop:4}}>Zuerst Firmendaten unter ⚙ einrichten.</div></div>)}
+    {docs.map(d=>{const tot=d.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);return(<div key={d.id} onClick={()=>setScreen({...d,_preview:true})} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div><div style={{fontWeight:700,fontSize:15,color:C.text}}>{DOC_TYPES[d.type]||d.type}{d.nr?` · ${d.nr}`:""}</div><div style={{fontSize:13,color:C.textSub,marginTop:2}}>{d.contact} · {d.datum}</div></div>
+      <div style={{textAlign:"right"}}><div style={{fontWeight:800,color:C.green,fontSize:15}}>{fmt(tot)} €</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{d.positionen.length} Pos.</div></div>
+    </div>);})}
+  </div>);
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+const NAV=[{id:"dashboard",label:"Home",icon:"⬛"},{id:"contacts",label:"Kontakte",icon:"👤"},{id:"tasks",label:"Aufgaben",icon:"✅"},{id:"docs",label:"Dokumente",icon:"📄"},{id:"activity",label:"Log",icon:"📋"}];
+const VIEWS={dashboard:"Dashboard",contacts:"Kontakte",tasks:"Aufgaben",docs:"Dokumente",activity:"Aktivitäten"};
+
+function App(){
+  const [view,setView]=useState("dashboard");
+  const [contacts,setContactsRaw]=useState(()=>lsGet("crm:contacts",DEF_CONTACTS));
+  const [tasks,setTasksRaw]=useState(()=>lsGet("crm:tasks",DEF_TASKS));
+  const [activities,setActivitiesRaw]=useState(()=>lsGet("crm:activities",DEF_ACT));
+
+  const setContacts=val=>{const n=typeof val==="function"?val(contacts):val;setContactsRaw(n);lsSet("crm:contacts",n);};
+  const setTasks=val=>{const n=typeof val==="function"?val(tasks):val;setTasksRaw(n);lsSet("crm:tasks",n);};
+  const setActivities=val=>{const n=typeof val==="function"?val(activities):val;setActivitiesRaw(n);lsSet("crm:activities",n);};
+
+  const fileRef=useRef(null);
+  const [toast,setToast]=useState("");
+  const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(""),3000);};
+
+  const exportData=()=>{
+    const docs=lsGet("crm:docs",[]);
+    const settings=lsGet("crm:settings",{});
+    const data={contacts,tasks,activities,docs,settings,exportedAt:new Date().toISOString()};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const file=new File([blob],`clientos-backup-${today().replace(/\./g,"-")}.json`,{type:"application/json"});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:"ClientOS Backup"}).catch(()=>{});
+    } else {
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");a.href=url;a.download=file.name;a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),3000);
+    }
+    showToast("✅ Export erstellt!");
+  };
+
+  const importData=e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        if(d.contacts){setContacts(d.contacts);}
+        if(d.tasks){setTasks(d.tasks);}
+        if(d.activities){setActivities(d.activities);}
+        if(d.docs){lsSet("crm:docs",d.docs);}
+        if(d.settings){lsSet("crm:settings",d.settings);}
+        showToast("✅ Daten importiert! Bitte App neu laden.");
+      }catch{showToast("❌ Datei ungültig.");}
+    };
+    reader.readAsText(file);
+    e.target.value="";
+  };
+
+  return(<div style={{minHeight:"100vh",minHeight:"100dvh",background:C.bg,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
+    <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,paddingTop:"calc(env(safe-area-inset-top) + 14px)",paddingBottom:"14px",paddingLeft:"20px",paddingRight:"20px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
+      <div><div style={{fontWeight:900,fontSize:18,color:C.text,letterSpacing:-.5}}><span style={{color:C.accent}}>▸</span> ClientOS</div><div style={{fontSize:11,color:C.muted}}>{VIEWS[view]}</div></div>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <button onClick={exportData} title="Exportieren" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,color:C.green,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"8px 12px",cursor:"pointer"}}>⬆️</button>
+        <button onClick={()=>fileRef.current?.click()} title="Importieren" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,color:C.accent,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"8px 12px",cursor:"pointer"}}>⬇️</button>
+        <input ref={fileRef} type="file" accept=".json" onChange={importData} style={{display:"none"}}/>
+        {toast&&<div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",zIndex:300,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 18px",color:C.text,fontWeight:600,fontSize:14,boxShadow:"0 4px 20px rgba(0,0,0,.5)",whiteSpace:"nowrap"}}>{toast}</div>}
+      </div>
+    </div>
+    <div style={{flex:1,padding:"16px 16px 90px",overflowY:"auto"}}>
+      {view==="dashboard"&&<Dashboard contacts={contacts} tasks={tasks} activities={activities}/>}
+      {view==="contacts"&&<Contacts contacts={contacts} setContacts={setContacts} setActivities={setActivities}/>}
+      {view==="tasks"&&<Tasks tasks={tasks} setTasks={setTasks} contacts={contacts} setActivities={setActivities}/>}
+      {view==="docs"&&<Docs contacts={contacts}/>}
+      {view==="activity"&&<Activity activities={activities} setActivities={setActivities}/>}
+    </div>
+    <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.surface,borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
+      {NAV.map(n=>(<button key={n.id} onClick={()=>setView(n.id)} style={{flex:1,background:"transparent",border:"none",padding:"12px 4px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",borderTop:view===n.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
+        <span style={{fontSize:20}}>{n.icon}</span>
+        <span style={{fontSize:10,color:view===n.id?C.accent:C.muted,fontWeight:view===n.id?700:400,fontFamily:"inherit"}}>{n.label}</span>
+      </button>))}
+    </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
