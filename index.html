@@ -97,7 +97,10 @@ function buildDocHTML(doc,contacts,settings){
     +'<tr class="sum-total"><td>Fälliger Gesamtbetrag</td><td style="text-align:right">'+fmt(tot)+' \u20AC</td></tr></tbody></table>'
     +notizHtml+sigHtml+agbHtml
     +'</div></div>'
-    +'<div class="footer-bar">VIELEN DANK FÜR IHR VERTRAUEN</div>'
+    +'<div class="footer-bar">'
+    +(s.iban||s.bank?'<div style="font-size:9px;margin-bottom:4px;opacity:.85;">'+(s.bank?s.bank+' · ':'')+(s.iban?'IBAN: '+s.iban+' ':'')+(s.bic?'· BIC: '+s.bic:'')+'</div>':'')
+    +'<div>VIELEN DANK FÜR IHR VERTRAUEN</div>'
+    +'</div>'
     +'<'+'/body><'+'/html>';
 }
 
