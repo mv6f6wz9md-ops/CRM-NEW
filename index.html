@@ -33,7 +33,8 @@ const DOC_PREFIX={"Angebot":"ANG","AB":"AB","Rechnung":"RECHN"};
 const DOC_GREEN="#2d6a2d";
 const uid=()=>Math.random().toString(36).slice(2,9);
 const today=()=>new Date().toLocaleDateString("de-DE");
-const fmt=v=>parseFloat(v||0).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmt=v=>(typeof v==="number"?v:parseDE(v||0)).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
+function parseDE(v){if(v===null||v===undefined)return 0;var s=String(v).trim().replace(/\./g,"").replace(",",".");var n=parseFloat(s);return isNaN(n)?0:n;}
 function lsGet(key,fallback){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
 function lsSet(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
 function nextDocNumber(docs,type){
@@ -72,11 +73,11 @@ function buildDocHTML(doc,contacts,settings){
   const c=contacts.find(x=>x.name===doc.contact)||{};
   const s=settings||{};
   const pos=doc.positionen||[];
-  const tot=pos.reduce((sum,p)=>sum+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+  const tot=pos.reduce((sum,p)=>sum+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);
   const typLabel=DOC_TYPES[doc.type]||doc.type;
   const G=DOC_GREEN;
   const rows=pos.map(p=>{
-    const m=parseFloat(p.menge||1),ep=parseFloat(p.einzelpreis||p.betrag||0),gp=m*ep;
+    const m=parseDE(p.menge||1),ep=parseDE(p.einzelpreis||p.betrag||0),gp=m*ep;
     return '<tr><td style="white-space:pre-line">'+p.text+'</td><td class="r">'+m.toLocaleString('de-DE')+'</td><td class="r">'+fmt(ep)+' \u20AC</td><td class="r b">'+fmt(gp)+' \u20AC</td></tr>';
   }).join('');
   const logo=s.logo?'<img src="'+s.logo+'" style="position:absolute;left:0;top:0;height:100%;width:240px;object-fit:cover;object-position:center"><div style="position:absolute;left:0;top:0;height:100%;width:240px;background:linear-gradient(to right,transparent 55%,'+G+' 100%)"></div><div style="width:220px;flex-shrink:0"></div>':'';
@@ -352,7 +353,7 @@ function NewDocForm({contacts,onSave,onClose,existingDocs,prefill}){
   const addPos=()=>setForm(p=>Object.assign({},p,{positionen:[...p.positionen,{id:uid(),text:"",menge:"1",einzelpreis:""}]}));
   const delPos=id=>setForm(p=>Object.assign({},p,{positionen:p.positionen.filter(x=>x.id!==id)}));
   const updatePos=(id,field)=>e=>{const val=e.target.value;setForm(p=>Object.assign({},p,{positionen:p.positionen.map(x=>x.id===id?Object.assign({},x,{[field]:val}):x)}));};
-  const total=form.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||0)),0);
+  const total=form.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||0)),0);
   const [bausteinTarget,setBausteinTarget]=useState(null);
   const insertBaustein=text=>{
     if(!bausteinTarget)return;
@@ -383,7 +384,7 @@ function NewDocForm({contacts,onSave,onClose,existingDocs,prefill}){
       <div>
         <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:8}}>Positionen</label>
         {form.positionen.map((p,i)=>{
-          const gp=parseFloat(p.menge||1)*parseFloat(p.einzelpreis||0);
+          const gp=parseDE(p.menge||1)*parseDE(p.einzelpreis||0);
           return <div key={p.id} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <span style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Position {i+1}</span>
@@ -424,7 +425,7 @@ function NewDocForm({contacts,onSave,onClose,existingDocs,prefill}){
 function DocPreview({doc,contacts,settings,onBack}){
   const s=settings||{};
   const pos=doc.positionen||[];
-  const tot=pos.reduce((sum,p)=>sum+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+  const tot=pos.reduce((sum,p)=>sum+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);
   const typLabel=DOC_TYPES[doc.type]||doc.type;
   const c=contacts.find(x=>x.name===doc.contact)||{};
   const [generating,setGenerating]=useState(false);
@@ -485,7 +486,7 @@ function DocPreview({doc,contacts,settings,onBack}){
           <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"4px 8px",background:DOC_GREEN,color:"#fff",padding:"7px 8px",marginTop:16,borderRadius:"4px 4px 0 0",alignItems:"center"}}>
             {["Beschreibung","Menge","Einzelpr.","Gesamt"].map((h,i)=><div key={h} style={{fontSize:9,fontWeight:800,textTransform:"uppercase",textAlign:i>0?"right":"left"}}>{h}</div>)}
           </div>
-          {pos.map((p,i)=>{const m=parseFloat(p.menge||1),ep=parseFloat(p.einzelpreis||p.betrag||0),gp=m*ep;return <div key={p.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"4px 8px",padding:"8px",borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa",alignItems:"start"}}>
+          {pos.map((p,i)=>{const m=parseDE(p.menge||1),ep=parseDE(p.einzelpreis||p.betrag||0),gp=m*ep;return <div key={p.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"4px 8px",padding:"8px",borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa",alignItems:"start"}}>
             <div style={{fontSize:11,lineHeight:1.4,whiteSpace:"pre-line"}}>{p.text}</div>
             <div style={{fontSize:11,textAlign:"right",color:"#555",whiteSpace:"nowrap"}}>{m.toLocaleString("de-DE")}</div>
             <div style={{fontSize:11,textAlign:"right",color:"#555",whiteSpace:"nowrap"}}>{fmt(ep)} €</div>
@@ -524,7 +525,7 @@ function Docs({contacts}){
   if(screen&&screen._preview) return <DocPreview doc={screen} contacts={contacts} settings={settings} onBack={()=>setScreen(docs.find(d=>d.id===screen.id)||null)}/>;
   if(screen&&typeof screen==="object"&&screen.id){
     const doc=screen;
-    const tot=doc.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);
+    const tot=doc.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);
     return <Sheet open={true} onClose={()=>setScreen(null)} title={(DOC_TYPES[doc.type]||doc.type)+(doc.nr?" · "+doc.nr:"")}>
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
         <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}}>
@@ -534,7 +535,7 @@ function Docs({contacts}){
           <div style={{fontSize:11,color:C.textSub,fontWeight:700,textTransform:"uppercase",marginBottom:10}}>Positionen</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"6px 10px"}}>
             {["Beschreibung","Menge","Einzelpreis","Gesamt"].map((h,i)=><div key={h} style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",textAlign:i>0?"right":"left",paddingBottom:6,borderBottom:"1px solid "+C.border}}>{h}</div>)}
-            {doc.positionen.map(p=>{const m=parseFloat(p.menge||1),ep=parseFloat(p.einzelpreis||p.betrag||0),gp=m*ep;return <Fragment key={p.id}>
+            {doc.positionen.map(p=>{const m=parseDE(p.menge||1),ep=parseDE(p.einzelpreis||p.betrag||0),gp=m*ep;return <Fragment key={p.id}>
               <div style={{color:C.text,fontSize:13,paddingBottom:8,borderBottom:"1px solid "+C.border,whiteSpace:"pre-line"}}>{p.text}</div>
               <div style={{color:C.textSub,fontSize:13,textAlign:"right",paddingBottom:8,borderBottom:"1px solid "+C.border}}>{m.toLocaleString("de-DE")}</div>
               <div style={{color:C.textSub,fontSize:13,textAlign:"right",paddingBottom:8,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{fmt(ep)} €</div>
@@ -555,7 +556,7 @@ function Docs({contacts}){
       <Btn onClick={()=>setScreen("settings")} variant="ghost" full>⚙ Firmendaten</Btn>
     </div>
     {docs.length===0&&<div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:32,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📄</div><div style={{color:C.textSub,fontSize:14}}>Noch keine Dokumente.</div><div style={{color:C.muted,fontSize:12,marginTop:4}}>Zuerst Firmendaten unter ⚙ einrichten.</div></div>}
-    {docs.map(d=>{const tot=d.positionen.reduce((s,p)=>s+(parseFloat(p.menge||1)*parseFloat(p.einzelpreis||p.betrag||0)),0);return <div key={d.id} onClick={()=>setScreen(d)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+    {docs.map(d=>{const tot=d.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);return <div key={d.id} onClick={()=>setScreen(d)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <div><div style={{fontWeight:700,fontSize:15,color:C.text}}>{(DOC_TYPES[d.type]||d.type)+(d.nr?" · "+d.nr:"")}</div><div style={{fontSize:13,color:C.textSub,marginTop:2}}>{d.contact+" · "+d.datum}</div></div>
       <div style={{textAlign:"right"}}><div style={{fontWeight:800,color:C.green,fontSize:15}}>{fmt(tot)} €</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{d.positionen.length} Pos.</div></div>
     </div>;})}
