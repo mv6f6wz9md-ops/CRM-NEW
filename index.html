@@ -35,6 +35,23 @@ const uid=()=>Math.random().toString(36).slice(2,9);
 const today=()=>new Date().toLocaleDateString("de-DE");
 const fmt=v=>(typeof v==="number"?v:parseDE(v||0)).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
 function parseDE(v){if(v===null||v===undefined)return 0;var s=String(v).trim().replace(/\./g,"").replace(",",".");var n=parseFloat(s);return isNaN(n)?0:n;}
+function isOverdue(dueStr){
+  if(!dueStr) return false;
+  var m=dueStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if(!m) return false;
+  var due=new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]));
+  var now=new Date();now.setHours(0,0,0,0);
+  return due<now;
+}
+function isDueSoon(dueStr){
+  if(!dueStr) return false;
+  var m=dueStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if(!m) return false;
+  var due=new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]));
+  var now=new Date();now.setHours(0,0,0,0);
+  var diff=(due-now)/(1000*60*60*24);
+  return diff>=0&&diff<=7;
+}
 function lsGet(key,fallback){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
 function lsSet(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
 function nextDocNumber(docs,type){
@@ -133,9 +150,23 @@ function Sheet({open,onClose,title,children}){
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({contacts,tasks,activities}){
   const open=tasks.filter(t=>!t.done);
+  const overdueCount=open.filter(t=>isOverdue(t.due)).length;
+  const [docs]=useState(()=>lsGet("crm:docs",[]));
+  const now=new Date();
+  const thisMonth=now.getMonth(),thisYear=now.getFullYear();
+  const parseDocDate=ds=>{
+    if(!ds) return null;
+    const m=ds.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    return m?new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1])):null;
+  };
+  const rechnungen=docs.filter(d=>d.type==="Rechnung");
+  const offeneRechnungen=rechnungen.filter(d=>!d.bezahlt);
+  const offenerBetrag=offeneRechnungen.reduce((s,d)=>s+d.positionen.reduce((ss,p)=>ss+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0),0);
+  const umsatzMonat=rechnungen.filter(d=>{const dt=parseDocDate(d.datum);return dt&&dt.getMonth()===thisMonth&&dt.getFullYear()===thisYear;}).reduce((s,d)=>s+d.positionen.reduce((ss,p)=>ss+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0),0);
+  const umsatzJahr=rechnungen.filter(d=>{const dt=parseDocDate(d.datum);return dt&&dt.getFullYear()===thisYear;}).reduce((s,d)=>s+d.positionen.reduce((ss,p)=>ss+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0),0);
   return <div style={{display:"flex",flexDirection:"column",gap:16}}>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-      {[{label:"Kontakte",val:contacts.length,icon:"👤",color:C.accent},{label:"Offen",val:open.length,icon:"⏳",color:C.amber},{label:"Erledigt",val:tasks.length-open.length,icon:"✅",color:C.green},{label:"Aktivitäten",val:activities.length,icon:"📋",color:C.muted}].map(s=>(
+      {[{label:"Kontakte",val:contacts.length,icon:"👤",color:C.accent},{label:overdueCount>0?"Überfällig":"Offen",val:overdueCount>0?overdueCount:open.length,icon:overdueCount>0?"🔴":"⏳",color:overdueCount>0?C.red:C.amber},{label:"Erledigt",val:tasks.length-open.length,icon:"✅",color:C.green},{label:"Aktivitäten",val:activities.length,icon:"📋",color:C.muted}].map(s=>(
         <div key={s.label} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"16px 14px"}}>
           <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
           <div style={{fontSize:28,fontWeight:900,color:s.color}}>{s.val}</div>
@@ -143,6 +174,28 @@ function Dashboard({contacts,tasks,activities}){
         </div>
       ))}
     </div>
+    {docs.length>0&&<div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:16}}>
+      <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:.5}}>Umsatzübersicht</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div>
+          <div style={{fontSize:11,color:C.muted}}>Offene Rechnungen</div>
+          <div style={{fontSize:18,fontWeight:800,color:offeneRechnungen.length>0?C.amber:C.text}}>{fmt(offenerBetrag)} €</div>
+          <div style={{fontSize:10,color:C.muted}}>{offeneRechnungen.length} Stück</div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:C.muted}}>Umsatz diesen Monat</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.green}}>{fmt(umsatzMonat)} €</div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:C.muted}}>Umsatz dieses Jahr</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.green}}>{fmt(umsatzJahr)} €</div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:C.muted}}>Rechnungen gesamt</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.text}}>{rechnungen.length}</div>
+        </div>
+      </div>
+    </div>}
     <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:16}}>
       <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:.5}}>Offene Aufgaben</div>
       {open.length===0&&<div style={{color:C.muted,fontSize:14}}>Alles erledigt 🎉</div>}
@@ -175,7 +228,13 @@ function Contacts({contacts,setContacts,setActivities,openContactId,goTo}){
   },[openContactId]);
   const [form,setForm]=useState({name:"",company:"",email:"",phone:"",strasse:"",plz:"",ort:"",status:"Aktiv"});
   const [noteText,setNoteText]=useState("");
+  const [search,setSearch]=useState("");
   const ff=v=>e=>setForm(p=>Object.assign({},p,{[v]:e.target.value}));
+  const filteredContacts=contacts.filter(c=>{
+    if(!search.trim()) return true;
+    const q=search.toLowerCase();
+    return (c.name||"").toLowerCase().includes(q)||(c.company||"").toLowerCase().includes(q)||(c.phone||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q);
+  });
 
   const openAdd=()=>{setForm({name:"",company:"",email:"",phone:"",strasse:"",plz:"",ort:"",status:"Aktiv"});setEditing(false);setSheet("add");};
   const openEdit=c=>{setForm({name:c.name,company:c.company,email:c.email,phone:c.phone,strasse:c.strasse||"",plz:c.plz||"",ort:c.ort||"",status:c.status});setEditing(true);setSheet({...c,_edit:true});};
@@ -201,7 +260,9 @@ function Contacts({contacts,setContacts,setActivities,openContactId,goTo}){
 
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
     <Btn onClick={openAdd} full>+ Neuer Kontakt</Btn>
-    {contacts.map(c=><div key={c.id} onClick={()=>setSheet(c)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+    {contacts.length>0&&<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Suche nach Name, Firma, Telefon…" style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,padding:"11px 13px",outline:"none"}}/>}
+    {contacts.length>0&&filteredContacts.length===0&&<div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:24,textAlign:"center",color:C.muted,fontSize:13}}>Keine Treffer für "{search}"</div>}
+    {filteredContacts.map(c=><div key={c.id} onClick={()=>setSheet(c)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
       <div><div style={{fontWeight:700,fontSize:15,color:C.text}}>{c.name}</div><div style={{fontSize:13,color:C.textSub,marginTop:2}}>{c.company}</div></div>
       <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}><Badge label={c.status} color={STATUS_C[c.status]}/><div style={{fontSize:11,color:C.muted}}>{c.notes.length} Notiz{c.notes.length!==1?"en":""}</div></div>
     </div>)}
@@ -277,12 +338,21 @@ function Tasks({tasks,setTasks,contacts,setActivities}){
   const save=()=>{if(!form.title.trim())return;const t=Object.assign({},form,{id:uid(),done:false});setTasks(p=>[t,...p]);setActivities(p=>[{id:uid(),type:"✅",text:'Aufgabe "'+t.title+'" erstellt',date:today()},...p]);setSheet(false);setForm({title:"",contact:contacts[0]?contacts[0].name:"",priority:"Mittel",due:""});};
   const toggle=id=>setTasks(p=>p.map(t=>t.id===id?Object.assign({},t,{done:!t.done}):t));
   const del=id=>setTasks(p=>p.filter(t=>t.id!==id));
-  const open=tasks.filter(t=>!t.done),done=tasks.filter(t=>t.done);
-  const Row=({t})=><div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",opacity:t.done?.7:1,display:"flex",gap:12,alignItems:"center"}}>
+  const open=tasks.filter(t=>!t.done).slice().sort((a,b)=>{
+    const aOver=isOverdue(a.due),bOver=isOverdue(b.due);
+    if(aOver&&!bOver) return -1;
+    if(!aOver&&bOver) return 1;
+    return 0;
+  });
+  const done=tasks.filter(t=>t.done);
+  const Row=({t})=>{
+    const overdue=!t.done&&isOverdue(t.due);
+    const dueSoon=!t.done&&!overdue&&isDueSoon(t.due);
+    return <div style={{background:C.card,border:"1px solid "+(overdue?C.red+"66":C.border),borderRadius:14,padding:"14px 16px",opacity:t.done?.7:1,display:"flex",gap:12,alignItems:"center"}}>
     <div onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:"2px solid "+(t.done?C.green:C.border),background:t.done?C.green+"33":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,fontSize:14,color:C.green}}>{t.done?"✓":""}</div>
-    <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontWeight:600,fontSize:14,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div><div style={{color:C.muted,fontSize:12,marginTop:2}}>{t.contact}{t.due?" · "+t.due:""}</div></div>
+    <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontWeight:600,fontSize:14,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div><div style={{color:overdue?C.red:(dueSoon?C.amber:C.muted),fontSize:12,marginTop:2,fontWeight:overdue?700:400}}>{t.contact}{t.due?" · "+t.due:""}{overdue?" · Überfällig":(dueSoon?" · Bald fällig":"")}</div></div>
     <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}><Badge label={t.priority} color={PRIO_C[t.priority]}/><button onClick={()=>del(t.id)} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:0}}>🗑</button></div>
-  </div>;
+  </div>;};
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
     <Btn onClick={()=>setSheet(true)} full>+ Neue Aufgabe</Btn>
     <div style={{fontSize:12,color:C.textSub,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>Offen ({open.length})</div>
@@ -725,6 +795,13 @@ function Docs({contacts,goTo,openDocFilter}){
           </div>
           <div style={{display:"flex",justifyContent:"space-between",marginTop:12,paddingTop:10,borderTop:"2px solid "+C.border}}><span style={{fontWeight:800,color:C.text,fontSize:14}}>Fälliger Gesamtbetrag</span><span style={{fontWeight:800,color:C.green,fontSize:14,whiteSpace:"nowrap"}}>{fmt(tot)} €</span></div>
         </div>
+        {doc.type==="Rechnung"&&<Btn onClick={()=>{
+          const upd=Object.assign({},doc,{bezahlt:!doc.bezahlt,bezahltAm:!doc.bezahlt?today():null});
+          saveDocs(p=>p.map(x=>x.id===doc.id?upd:x));
+          setScreen(upd);
+        }} variant={doc.bezahlt?"ghost":"primary"} full style={doc.bezahlt?{}:{background:C.green}}>
+          {doc.bezahlt?"✓ Als bezahlt markiert ("+(doc.bezahltAm||"")+") · Zurücksetzen":"💶 Als bezahlt markieren"}
+        </Btn>}
         <Btn onClick={()=>setScreen(Object.assign({},doc,{_preview:true}))} full>👁 Vorschau &amp; PDF</Btn>
         <Btn onClick={()=>setScreen(Object.assign({},doc,{_edit:true}))} variant="ghost" full>✏️ Bearbeiten</Btn>
         <Btn onClick={()=>setScreen(Object.assign({},doc,{_uebernehmen:true}))} variant="ghost" full>{"📋 Als "+(doc.type==="Angebot"?"Auftragsbestätigung":"Rechnung")+" übernehmen"}</Btn>
@@ -732,14 +809,28 @@ function Docs({contacts,goTo,openDocFilter}){
       </div>
     </Sheet>;
   }
+  const [search,setSearch]=useState("");
+  const filteredDocs=docs.filter(d=>{
+    if(!search.trim()) return true;
+    const q=search.toLowerCase();
+    return (d.contact||"").toLowerCase().includes(q)||(d.nr||"").toLowerCase().includes(q)||(DOC_TYPES[d.type]||d.type||"").toLowerCase().includes(q);
+  });
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
       <Btn onClick={()=>setScreen("new")} full>+ Neu</Btn>
       <Btn onClick={()=>setScreen("settings")} variant="ghost" full>⚙ Firmendaten</Btn>
     </div>
+    {docs.length>0&&<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Suche nach Name, Nummer, Typ…" style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,padding:"11px 13px",outline:"none"}}/>}
     {docs.length===0&&<div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:32,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📄</div><div style={{color:C.textSub,fontSize:14}}>Noch keine Dokumente.</div><div style={{color:C.muted,fontSize:12,marginTop:4}}>Zuerst Firmendaten unter ⚙ einrichten.</div></div>}
-    {docs.map(d=>{const tot=d.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);return <div key={d.id} onClick={()=>setScreen(d)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div><div style={{fontWeight:700,fontSize:15,color:C.text}}>{(DOC_TYPES[d.type]||d.type)+(d.nr?" · "+d.nr:"")}</div><div style={{fontSize:13,color:C.textSub,marginTop:2}}>{d.contact+" · "+d.datum}</div></div>
+    {docs.length>0&&filteredDocs.length===0&&<div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:24,textAlign:"center",color:C.muted,fontSize:13}}>Keine Treffer für "{search}"</div>}
+    {filteredDocs.map(d=>{const tot=d.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);return <div key={d.id} onClick={()=>setScreen(d)} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div style={{fontWeight:700,fontSize:15,color:C.text}}>{(DOC_TYPES[d.type]||d.type)+(d.nr?" · "+d.nr:"")}</div>
+          {d.type==="Rechnung"&&<Badge label={d.bezahlt?"Bezahlt":"Offen"} color={d.bezahlt?C.green:C.amber}/>}
+        </div>
+        <div style={{fontSize:13,color:C.textSub,marginTop:2}}>{d.contact+" · "+d.datum}</div>
+      </div>
       <div style={{textAlign:"right"}}><div style={{fontWeight:800,color:C.green,fontSize:15}}>{fmt(tot)} €</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{d.positionen.length} Pos.</div></div>
     </div>;})}
   </div>;
