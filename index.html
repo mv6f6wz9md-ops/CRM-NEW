@@ -741,6 +741,7 @@ function Docs({contacts,goTo,openDocFilter}){
   const [screen,setScreen]=useState(null);
   const [docs,setDocsRaw]=useState(()=>lsGet("crm:docs",[]));
   const [settings,setSettingsRaw]=useState(()=>lsGet("crm:settings",DEF_SETTINGS));
+  const [search,setSearch]=useState("");
 
   useEffect(()=>{
     if(openDocFilter&&openDocFilter.openDocId){
@@ -809,7 +810,6 @@ function Docs({contacts,goTo,openDocFilter}){
       </div>
     </Sheet>;
   }
-  const [search,setSearch]=useState("");
   const filteredDocs=docs.filter(d=>{
     if(!search.trim()) return true;
     const q=search.toLowerCase();
