@@ -688,7 +688,7 @@ function Docs({contacts}){
         </div>
         <Btn onClick={()=>setScreen(Object.assign({},doc,{_preview:true}))} full>👁 Vorschau &amp; PDF</Btn>
         <Btn onClick={()=>setScreen(Object.assign({},doc,{_edit:true}))} variant="ghost" full>✏️ Bearbeiten</Btn>
-        {(doc.type==="Angebot"||doc.type==="AB")&&<Btn onClick={()=>setScreen(Object.assign({},doc,{_uebernehmen:true}))} variant="ghost" full>{"📋 Als "+(doc.type==="Angebot"?"Auftragsbestätigung":"Rechnung")+" übernehmen"}</Btn>}
+        <Btn onClick={()=>setScreen(Object.assign({},doc,{_uebernehmen:true}))} variant="ghost" full>{"📋 Als "+(doc.type==="Angebot"?"Auftragsbestätigung":"Rechnung")+" übernehmen"}</Btn>
         <Btn onClick={()=>{saveDocs(p=>p.filter(d=>d.id!==doc.id));setScreen(null);}} variant="danger" full>Dokument löschen</Btn>
       </div>
     </Sheet>;
