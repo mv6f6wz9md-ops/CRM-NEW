@@ -83,7 +83,8 @@ function buildDocHTML(doc,contacts,settings){
   const logo=s.logo?'<img src="'+s.logo+'" style="position:absolute;left:0;top:0;height:100%;width:240px;object-fit:cover;object-position:center"><div style="position:absolute;left:0;top:0;height:100%;width:240px;background:linear-gradient(to right,transparent 55%,'+G+' 100%)"></div><div style="width:220px;flex-shrink:0"></div>':'';
   const metaRows=(doc.nr?'Nummer: '+doc.nr+'<br>':'')+'Datum: '+doc.datum+(doc.faellig?'<br>Fällig: '+doc.faellig:'');
   const fromDetail=[s.telefon,s.email,s.strasse?(s.strasse+(s.plz||s.ort?', '+s.plz+' '+s.ort:'')):null].filter(Boolean).join('<br>');
-  const toDetail=[c.email,c.company].filter(Boolean).join('<br>');
+  const cAddr=c.strasse?(c.strasse+((c.plz||c.ort)?', '+c.plz+' '+c.ort:'')):null;
+  const toDetail=[c.company,cAddr,c.email].filter(Boolean).join('<br>');
   const notizHtml=doc.notiz?'<div class="notiz">'+doc.notiz+'</div>':'';
   const agbHtml=s.agb?'<div class="agb-section"><div class="agb-title">Allgemeine Geschäftsbedingungen</div><div class="agb-text">'+s.agb+'</div></div>':'';
   const sigHtml='<div class="sig-area">'+(s.signature?'<img src="'+s.signature+'" style="height:50px;max-width:200px;object-fit:contain;display:inline-block;">':'<div style="height:40px"></div>')+'<div class="sig-line">'+(s.inhaber||s.firma||'')+'</div></div>';
@@ -164,12 +165,12 @@ function Dashboard({contacts,tasks,activities}){
 function Contacts({contacts,setContacts,setActivities}){
   const [sheet,setSheet]=useState(null);
   const [editing,setEditing]=useState(false);
-  const [form,setForm]=useState({name:"",company:"",email:"",phone:"",status:"Aktiv"});
+  const [form,setForm]=useState({name:"",company:"",email:"",phone:"",strasse:"",plz:"",ort:"",status:"Aktiv"});
   const [noteText,setNoteText]=useState("");
   const ff=v=>e=>setForm(p=>Object.assign({},p,{[v]:e.target.value}));
 
-  const openAdd=()=>{setForm({name:"",company:"",email:"",phone:"",status:"Aktiv"});setEditing(false);setSheet("add");};
-  const openEdit=c=>{setForm({name:c.name,company:c.company,email:c.email,phone:c.phone,status:c.status});setEditing(true);setSheet({...c,_edit:true});};
+  const openAdd=()=>{setForm({name:"",company:"",email:"",phone:"",strasse:"",plz:"",ort:"",status:"Aktiv"});setEditing(false);setSheet("add");};
+  const openEdit=c=>{setForm({name:c.name,company:c.company,email:c.email,phone:c.phone,strasse:c.strasse||"",plz:c.plz||"",ort:c.ort||"",status:c.status});setEditing(true);setSheet({...c,_edit:true});};
 
   const save=()=>{
     if(!form.name.trim())return;
@@ -203,6 +204,11 @@ function Contacts({contacts,setContacts,setActivities}){
         <Field label="Firma" value={form.company} onChange={ff("company")} placeholder="Mustermann GmbH"/>
         <Field label="E-Mail" value={form.email} onChange={ff("email")} placeholder="max@example.de"/>
         <Field label="Telefon" value={form.phone} onChange={ff("phone")} placeholder="+49 ..."/>
+        <Field label="Straße & Hausnummer" value={form.strasse} onChange={ff("strasse")} placeholder="Musterstraße 1"/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
+          <Field label="PLZ" value={form.plz} onChange={ff("plz")} placeholder="12345"/>
+          <Field label="Ort" value={form.ort} onChange={ff("ort")} placeholder="Musterstadt"/>
+        </div>
         <div style={{display:"flex",flexDirection:"column",gap:5}}>
           <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Status</label>
           <select value={form.status} onChange={ff("status")} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>{Object.keys(STATUS_C).map(s=><option key={s}>{s}</option>)}</select>
@@ -217,6 +223,7 @@ function Contacts({contacts,setContacts,setActivities}){
         {sel.company&&<div style={{color:C.textSub,fontSize:14}}>🏢 {sel.company}</div>}
         {sel.email&&<a href={"mailto:"+sel.email} style={{color:C.accent,fontSize:14,textDecoration:"none"}}>📧 {sel.email}</a>}
         {sel.phone&&<a href={"tel:"+sel.phone} style={{color:C.accent,fontSize:14,textDecoration:"none"}}>📞 {sel.phone}</a>}
+        {(sel.strasse||sel.plz||sel.ort)&&<div style={{color:C.textSub,fontSize:14}}>📍 {sel.strasse}{sel.strasse&&(sel.plz||sel.ort)?<br/>:""}{sel.plz} {sel.ort}</div>}
         <Btn onClick={()=>openEdit(sel)} variant="ghost" full>✏️ Bearbeiten</Btn>
         <div style={{borderTop:"1px solid "+C.border,paddingTop:14}}>
           <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:10,textTransform:"uppercase"}}>Notizen</div>
@@ -606,7 +613,7 @@ function DocPreview({doc,contacts,settings,onBack}){
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,padding:"16px 20px",borderBottom:"2px solid #eee"}}>
-          <div><div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.8,marginBottom:4}}>{typLabel} an:</div><div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{doc.contact}</div><div style={{fontSize:11,color:"#555",lineHeight:1.5}}>{c.email&&<div>{c.email}</div>}{c.company&&<div>{c.company}</div>}</div></div>
+          <div><div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.8,marginBottom:4}}>{typLabel} an:</div><div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{doc.contact}</div><div style={{fontSize:11,color:"#555",lineHeight:1.5}}>{c.company&&<div>{c.company}</div>}{c.strasse&&<div>{c.strasse}{(c.plz||c.ort)?", "+c.plz+" "+c.ort:""}</div>}{c.email&&<div>{c.email}</div>}</div></div>
           <div><div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.8,marginBottom:4}}>{typLabel} von:</div><div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{s.firma}</div><div style={{fontSize:11,color:"#555",lineHeight:1.5}}>{s.telefon&&<div>{s.telefon}</div>}{s.email&&<div>{s.email}</div>}{s.strasse&&<div>{s.strasse}{(s.plz||s.ort)?", "+s.plz+" "+s.ort:""}</div>}</div></div>
         </div>
         <div style={{padding:"0 20px 16px"}}>
