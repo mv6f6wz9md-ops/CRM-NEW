@@ -162,9 +162,17 @@ function Dashboard({contacts,tasks,activities}){
 }
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
-function Contacts({contacts,setContacts,setActivities}){
+function Contacts({contacts,setContacts,setActivities,openContactId,goTo}){
   const [sheet,setSheet]=useState(null);
   const [editing,setEditing]=useState(false);
+  const [docs]=useState(()=>lsGet("crm:docs",[]));
+
+  useEffect(()=>{
+    if(openContactId){
+      const c=contacts.find(x=>x.id===openContactId);
+      if(c) setSheet(c);
+    }
+  },[openContactId]);
   const [form,setForm]=useState({name:"",company:"",email:"",phone:"",strasse:"",plz:"",ort:"",status:"Aktiv"});
   const [noteText,setNoteText]=useState("");
   const ff=v=>e=>setForm(p=>Object.assign({},p,{[v]:e.target.value}));
@@ -225,6 +233,25 @@ function Contacts({contacts,setContacts,setActivities}){
         {sel.phone&&<a href={"tel:"+sel.phone} style={{color:C.accent,fontSize:14,textDecoration:"none"}}>📞 {sel.phone}</a>}
         {(sel.strasse||sel.plz||sel.ort)&&<div style={{color:C.textSub,fontSize:14}}>📍 {sel.strasse}{sel.strasse&&(sel.plz||sel.ort)?<br/>:""}{sel.plz} {sel.ort}</div>}
         <Btn onClick={()=>openEdit(sel)} variant="ghost" full>✏️ Bearbeiten</Btn>
+        {(()=>{
+          const relatedDocs=docs.filter(d=>d.contact===sel.name);
+          if(relatedDocs.length===0) return null;
+          return <div style={{borderTop:"1px solid "+C.border,paddingTop:14}}>
+            <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:10,textTransform:"uppercase"}}>Belege ({relatedDocs.length})</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {relatedDocs.map(d=>{
+                const tot=d.positionen.reduce((s,p)=>s+(parseDE(p.menge||1)*parseDE(p.einzelpreis||p.betrag||0)),0);
+                return <div key={d.id} onClick={()=>goTo&&goTo("docs",{openDocId:d.id})} style={{background:C.surface,borderRadius:10,padding:"10px 13px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{color:C.text,fontSize:13,fontWeight:600}}>{(DOC_TYPES[d.type]||d.type)+(d.nr?" · "+d.nr:"")}</div>
+                    <div style={{color:C.muted,fontSize:11,marginTop:2}}>{d.datum}</div>
+                  </div>
+                  <div style={{color:C.green,fontSize:13,fontWeight:700}}>{fmt(tot)} €</div>
+                </div>;
+              })}
+            </div>
+          </div>;
+        })()}
         <div style={{borderTop:"1px solid "+C.border,paddingTop:14}}>
           <div style={{fontSize:12,color:C.textSub,fontWeight:700,marginBottom:10,textTransform:"uppercase"}}>Notizen</div>
           <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -640,10 +667,17 @@ function DocPreview({doc,contacts,settings,onBack}){
   </div>;
 }
 
-function Docs({contacts}){
+function Docs({contacts,goTo,openDocFilter}){
   const [screen,setScreen]=useState(null);
   const [docs,setDocsRaw]=useState(()=>lsGet("crm:docs",[]));
   const [settings,setSettingsRaw]=useState(()=>lsGet("crm:settings",DEF_SETTINGS));
+
+  useEffect(()=>{
+    if(openDocFilter&&openDocFilter.openDocId){
+      const d=docs.find(x=>x.id===openDocFilter.openDocId);
+      if(d) setScreen(d);
+    }
+  },[openDocFilter]);
   const saveDocs=val=>{const n=typeof val==="function"?val(docs):val;setDocsRaw(n);lsSet("crm:docs",n);};
   const saveSettings=val=>{const n=typeof val==="function"?val(settings):val;setSettingsRaw(n);lsSet("crm:settings",n);};
   const handleSave=form=>{saveDocs(p=>[Object.assign({},form,{id:uid(),created:today()}),...p]);setScreen(null);};
@@ -673,6 +707,11 @@ function Docs({contacts}){
         <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}}>
           {[["Kontakt",doc.contact],["Datum",doc.datum],doc.faellig?["Fällig",doc.faellig]:null,["Erstellt",doc.created]].filter(Boolean).map(([l,v])=><div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid "+C.border}}><span style={{color:C.textSub,fontSize:13}}>{l}</span><span style={{color:C.text,fontSize:13,fontWeight:600}}>{v}</span></div>)}
         </div>
+        {(()=>{
+          const linkedContact=contacts.find(x=>x.name===doc.contact);
+          if(!linkedContact||!goTo) return null;
+          return <Btn onClick={()=>goTo("contacts",linkedContact.id)} variant="ghost" full>👤 Kontaktprofil öffnen</Btn>;
+        })()}
         <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}}>
           <div style={{fontSize:11,color:C.textSub,fontWeight:700,textTransform:"uppercase",marginBottom:10}}>Positionen</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:"6px 10px"}}>
@@ -712,6 +751,8 @@ const VIEWS={dashboard:"Dashboard",contacts:"Kontakte",tasks:"Aufgaben",docs:"Do
 
 function App(){
   const [view,setView]=useState("dashboard");
+  const [viewParam,setViewParam]=useState(null);
+  const goTo=(v,param)=>{setViewParam(param||null);setView(v);};
   const [contacts,setContactsRaw]=useState(()=>lsGet("crm:contacts",DEF_CONTACTS));
   const [tasks,setTasksRaw]=useState(()=>lsGet("crm:tasks",DEF_TASKS));
   const [activities,setActivitiesRaw]=useState(()=>lsGet("crm:activities",DEF_ACT));
@@ -758,9 +799,9 @@ function App(){
     </div>
     <div style={{flex:1,padding:"16px 16px 90px",overflowY:"auto"}}>
       {view==="dashboard"&&<Dashboard contacts={contacts} tasks={tasks} activities={activities}/>}
-      {view==="contacts"&&<Contacts contacts={contacts} setContacts={setContacts} setActivities={setActivities}/>}
+      {view==="contacts"&&<Contacts contacts={contacts} setContacts={setContacts} setActivities={setActivities} openContactId={viewParam} goTo={goTo}/>}
       {view==="tasks"&&<Tasks tasks={tasks} setTasks={setTasks} contacts={contacts} setActivities={setActivities}/>}
-      {view==="docs"&&<Docs contacts={contacts}/>}
+      {view==="docs"&&<Docs contacts={contacts} goTo={goTo} openDocFilter={viewParam}/>}
       {view==="activity"&&<Activity activities={activities} setActivities={setActivities}/>}
     </div>
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.surface,borderTop:"1px solid "+C.border,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
