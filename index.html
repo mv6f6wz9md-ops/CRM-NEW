@@ -52,6 +52,31 @@ function isDueSoon(dueStr){
   var diff=(due-now)/(1000*60*60*24);
   return diff>=0&&diff<=7;
 }
+function parseGermanDate(dueStr){
+  if(!dueStr) return null;
+  var m=dueStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if(!m) return null;
+  return new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]));
+}
+function formatGermanDate(d){
+  return d.getDate()+"."+(d.getMonth()+1)+"."+d.getFullYear();
+}
+function getWeekDays(refDate){
+  var d=new Date(refDate);
+  var day=d.getDay();
+  var diff=day===0?-6:1-day; // Monday as start
+  var monday=new Date(d);
+  monday.setDate(d.getDate()+diff);
+  monday.setHours(0,0,0,0);
+  var days=[];
+  for(var i=0;i<7;i++){
+    var dd=new Date(monday);
+    dd.setDate(monday.getDate()+i);
+    days.push(dd);
+  }
+  return days;
+}
+
 function lsGet(key,fallback){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
 function lsSet(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
 function nextDocNumber(docs,type){
@@ -144,6 +169,72 @@ function Sheet({open,onClose,title,children}){
       <button onClick={onClose} style={{background:C.card,border:"1px solid "+C.border,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,padding:"9px 16px",borderRadius:10,whiteSpace:"nowrap"}}>✕ Schließen</button>
     </div>
     <div style={{padding:"20px 16px 80px"}}>{children}</div>
+  </div>;
+}
+
+// ── WeekCalendar ────────────────────────────────────────────────────────────
+const WEEKDAY_NAMES=["Mo","Di","Mi","Do","Fr","Sa","So"];
+function WeekCalendar({tasks,contacts,goTo}){
+  const [refDate,setRefDate]=useState(()=>new Date());
+  const weekDays=getWeekDays(refDate);
+  const todayStr=formatGermanDate(new Date());
+
+  const tasksByDay=weekDays.map(day=>{
+    const dayStr=formatGermanDate(day);
+    return tasks.filter(t=>t.due===dayStr);
+  });
+
+  const prevWeek=()=>{const d=new Date(refDate);d.setDate(d.getDate()-7);setRefDate(d);};
+  const nextWeek=()=>{const d=new Date(refDate);d.setDate(d.getDate()+7);setRefDate(d);};
+  const goToday=()=>setRefDate(new Date());
+
+  const monthLabel=weekDays[0].toLocaleDateString("de-DE",{month:"long",year:"numeric"});
+
+  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <button onClick={prevWeek} style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,color:C.accent,fontSize:16,padding:"8px 14px",cursor:"pointer"}}>‹</button>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontWeight:800,fontSize:15,color:C.text}}>{monthLabel}</div>
+        <button onClick={goToday} style={{background:"transparent",border:"none",color:C.accent,fontSize:11,fontWeight:600,cursor:"pointer",padding:"2px 0"}}>Heute</button>
+      </div>
+      <button onClick={nextWeek} style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,color:C.accent,fontSize:16,padding:"8px 14px",cursor:"pointer"}}>›</button>
+    </div>
+
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {weekDays.map((day,i)=>{
+        const dayStr=formatGermanDate(day);
+        const isToday=dayStr===todayStr;
+        const dayTasks=tasksByDay[i];
+        const openTasks=dayTasks.filter(t=>!t.done);
+        const doneTasks=dayTasks.filter(t=>t.done);
+        const overdue=!isToday&&openTasks.length>0&&isOverdue(dayStr);
+        return <div key={i} style={{background:C.card,border:"1px solid "+(isToday?C.accent:C.border),borderRadius:14,padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:dayTasks.length>0?10:0}}>
+            <div style={{background:isToday?C.accent:C.surface,color:isToday?"#fff":C.textSub,borderRadius:8,width:38,height:38,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <div style={{fontSize:9,fontWeight:700,lineHeight:1}}>{WEEKDAY_NAMES[i]}</div>
+              <div style={{fontSize:14,fontWeight:800,lineHeight:1.2}}>{day.getDate()}</div>
+            </div>
+            <div style={{flex:1}}>
+              {dayTasks.length===0?
+                <div style={{color:C.muted,fontSize:12}}>Keine Termine</div>
+                :<div style={{color:C.textSub,fontSize:12}}>{openTasks.length>0?openTasks.length+" offen":""}{openTasks.length>0&&doneTasks.length>0?" · ":""}{doneTasks.length>0?doneTasks.length+" erledigt":""}</div>
+              }
+            </div>
+          </div>
+          {dayTasks.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {dayTasks.map(t=>(
+              <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:C.surface,borderRadius:8,padding:"8px 10px",opacity:t.done?.6:1}}>
+                <Badge label={t.priority} color={PRIO_C[t.priority]}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:C.text,fontSize:13,fontWeight:600,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div>
+                  {t.contact&&<div style={{color:C.muted,fontSize:11,marginTop:1}}>{t.contact}</div>}
+                </div>
+              </div>
+            ))}
+          </div>}
+        </div>;
+      })}
+    </div>
   </div>;
 }
 
@@ -837,8 +928,8 @@ function Docs({contacts,goTo,openDocFilter}){
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
-const NAV=[{id:"dashboard",label:"Home",icon:"⬛"},{id:"contacts",label:"Kontakte",icon:"👤"},{id:"tasks",label:"Aufgaben",icon:"✅"},{id:"docs",label:"Dokumente",icon:"📄"},{id:"activity",label:"Log",icon:"📋"}];
-const VIEWS={dashboard:"Dashboard",contacts:"Kontakte",tasks:"Aufgaben",docs:"Dokumente",activity:"Aktivitäten"};
+const NAV=[{id:"dashboard",label:"Home",icon:"⬛"},{id:"contacts",label:"Kontakte",icon:"👤"},{id:"tasks",label:"Aufgaben",icon:"✅"},{id:"docs",label:"Dokumente",icon:"📄"},{id:"calendar",label:"Kalender",icon:"📅"}];
+const VIEWS={dashboard:"Dashboard",contacts:"Kontakte",tasks:"Aufgaben",docs:"Dokumente",calendar:"Kalender"};
 
 function App(){
   const [view,setView]=useState("dashboard");
@@ -893,7 +984,7 @@ function App(){
       {view==="contacts"&&<Contacts contacts={contacts} setContacts={setContacts} setActivities={setActivities} openContactId={viewParam} goTo={goTo}/>}
       {view==="tasks"&&<Tasks tasks={tasks} setTasks={setTasks} contacts={contacts} setActivities={setActivities}/>}
       {view==="docs"&&<Docs contacts={contacts} goTo={goTo} openDocFilter={viewParam}/>}
-      {view==="activity"&&<Activity activities={activities} setActivities={setActivities}/>}
+      {view==="calendar"&&<WeekCalendar tasks={tasks} contacts={contacts} goTo={goTo}/>}
     </div>
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.surface,borderTop:"1px solid "+C.border,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
       {NAV.map(n=><button key={n.id} onClick={()=>setView(n.id)} style={{flex:1,background:"transparent",border:"none",padding:"12px 4px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",borderTop:view===n.id?"2px solid "+C.accent:"2px solid transparent"}}>
