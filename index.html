@@ -61,6 +61,12 @@ function parseGermanDate(dueStr){
 function formatGermanDate(d){
   return d.getDate()+"."+(d.getMonth()+1)+"."+d.getFullYear();
 }
+function normalizeDateStr(s){
+  if(!s) return "";
+  var m=String(s).trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if(!m) return String(s).trim();
+  return parseInt(m[1])+"."+parseInt(m[2])+"."+m[3];
+}
 function getWeekDays(refDate){
   var d=new Date(refDate);
   var day=d.getDay();
@@ -174,14 +180,39 @@ function Sheet({open,onClose,title,children}){
 
 // ── WeekCalendar ────────────────────────────────────────────────────────────
 const WEEKDAY_NAMES=["Mo","Di","Mi","Do","Fr","Sa","So"];
-function WeekCalendar({tasks,contacts,goTo}){
+function WeekCalendar({tasks,setTasks,contacts,setActivities,goTo}){
   const [refDate,setRefDate]=useState(()=>new Date());
+  const [quickAdd,setQuickAdd]=useState(null); // holds the day string when adding
+  const [qTitle,setQTitle]=useState("");
+  const [qContact,setQContact]=useState(contacts[0]?contacts[0].name:"");
+  const [qZeit,setQZeit]=useState("");
+  const [qPriority,setQPriority]=useState("Mittel");
   const weekDays=getWeekDays(refDate);
   const todayStr=formatGermanDate(new Date());
 
+  const openQuickAdd=dayStr=>{
+    setQuickAdd(dayStr);
+    setQTitle("");
+    setQContact(contacts[0]?contacts[0].name:"");
+    setQZeit("");
+    setQPriority("Mittel");
+  };
+  const saveQuickAdd=()=>{
+    if(!qTitle.trim()) return;
+    const t={id:uid(),title:qTitle.trim(),contact:qContact,priority:qPriority,due:quickAdd,zeit:qZeit,done:false};
+    setTasks(p=>[t,...p]);
+    setActivities(p=>[{id:uid(),type:"✅",text:'Aufgabe "'+t.title+'" erstellt',date:today()},...p]);
+    setQuickAdd(null);
+  };
+
   const tasksByDay=weekDays.map(day=>{
     const dayStr=formatGermanDate(day);
-    return tasks.filter(t=>t.due===dayStr);
+    return tasks.filter(t=>normalizeDateStr(t.due)===dayStr).slice().sort((a,b)=>{
+      if(!a.zeit&&!b.zeit) return 0;
+      if(!a.zeit) return 1;
+      if(!b.zeit) return -1;
+      return a.zeit.localeCompare(b.zeit);
+    });
   });
 
   const prevWeek=()=>{const d=new Date(refDate);d.setDate(d.getDate()-7);setRefDate(d);};
@@ -221,9 +252,10 @@ function WeekCalendar({tasks,contacts,goTo}){
               }
             </div>
           </div>
-          {dayTasks.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {dayTasks.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
             {dayTasks.map(t=>(
               <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:C.surface,borderRadius:8,padding:"8px 10px",opacity:t.done?.6:1}}>
+                {t.zeit&&<div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"3px 7px",fontSize:11,fontWeight:700,flexShrink:0}}>{t.zeit}</div>}
                 <Badge label={t.priority} color={PRIO_C[t.priority]}/>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{color:C.text,fontSize:13,fontWeight:600,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div>
@@ -232,9 +264,35 @@ function WeekCalendar({tasks,contacts,goTo}){
               </div>
             ))}
           </div>}
+          <button onClick={()=>openQuickAdd(dayStr)} style={{background:"transparent",border:"1px dashed "+C.border,borderRadius:8,color:C.accent,fontFamily:"inherit",fontWeight:600,fontSize:12,padding:"7px",width:"100%",cursor:"pointer"}}>+ Aufgabe</button>
         </div>;
       })}
     </div>
+
+    <Sheet open={!!quickAdd} onClose={()=>setQuickAdd(null)} title={"Neue Aufgabe · "+(quickAdd||"")}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Field label="Titel *" value={qTitle} onChange={e=>setQTitle(e.target.value)} placeholder="Aufgabe beschreiben…"/>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Uhrzeit</label>
+          <input type="time" value={qZeit} onChange={e=>setQZeit(e.target.value)} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px",outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Kontakt</label>
+          <select value={qContact} onChange={e=>setQContact(e.target.value)} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>
+            {contacts.map(c=><option key={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Priorität</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {Object.keys(PRIO_C).map(p=>(
+              <button key={p} onClick={()=>setQPriority(p)} style={{background:qPriority===p?PRIO_C[p]+"33":C.surface,border:"2px solid "+(qPriority===p?PRIO_C[p]:C.border),borderRadius:10,color:qPriority===p?PRIO_C[p]:C.textSub,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"11px 0",cursor:"pointer"}}>{p}</button>
+            ))}
+          </div>
+        </div>
+        <Btn onClick={saveQuickAdd} full>Speichern</Btn>
+      </div>
+    </Sheet>
   </div>;
 }
 
@@ -424,9 +482,9 @@ function Contacts({contacts,setContacts,setActivities,openContactId,goTo}){
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 function Tasks({tasks,setTasks,contacts,setActivities}){
   const [sheet,setSheet]=useState(false);
-  const [form,setForm]=useState({title:"",contact:contacts[0]?contacts[0].name:"",priority:"Mittel",due:""});
+  const [form,setForm]=useState({title:"",contact:contacts[0]?contacts[0].name:"",priority:"Mittel",due:"",zeit:""});
   const ff=v=>e=>setForm(p=>Object.assign({},p,{[v]:e.target.value}));
-  const save=()=>{if(!form.title.trim())return;const t=Object.assign({},form,{id:uid(),done:false});setTasks(p=>[t,...p]);setActivities(p=>[{id:uid(),type:"✅",text:'Aufgabe "'+t.title+'" erstellt',date:today()},...p]);setSheet(false);setForm({title:"",contact:contacts[0]?contacts[0].name:"",priority:"Mittel",due:""});};
+  const save=()=>{if(!form.title.trim())return;const t=Object.assign({},form,{id:uid(),done:false});setTasks(p=>[t,...p]);setActivities(p=>[{id:uid(),type:"✅",text:'Aufgabe "'+t.title+'" erstellt',date:today()},...p]);setSheet(false);setForm({title:"",contact:contacts[0]?contacts[0].name:"",priority:"Mittel",due:"",zeit:""});};
   const toggle=id=>setTasks(p=>p.map(t=>t.id===id?Object.assign({},t,{done:!t.done}):t));
   const del=id=>setTasks(p=>p.filter(t=>t.id!==id));
   const open=tasks.filter(t=>!t.done).slice().sort((a,b)=>{
@@ -441,7 +499,7 @@ function Tasks({tasks,setTasks,contacts,setActivities}){
     const dueSoon=!t.done&&!overdue&&isDueSoon(t.due);
     return <div style={{background:C.card,border:"1px solid "+(overdue?C.red+"66":C.border),borderRadius:14,padding:"14px 16px",opacity:t.done?.7:1,display:"flex",gap:12,alignItems:"center"}}>
     <div onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:"2px solid "+(t.done?C.green:C.border),background:t.done?C.green+"33":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,fontSize:14,color:C.green}}>{t.done?"✓":""}</div>
-    <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontWeight:600,fontSize:14,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div><div style={{color:overdue?C.red:(dueSoon?C.amber:C.muted),fontSize:12,marginTop:2,fontWeight:overdue?700:400}}>{t.contact}{t.due?" · "+t.due:""}{overdue?" · Überfällig":(dueSoon?" · Bald fällig":"")}</div></div>
+    <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontWeight:600,fontSize:14,textDecoration:t.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div><div style={{color:overdue?C.red:(dueSoon?C.amber:C.muted),fontSize:12,marginTop:2,fontWeight:overdue?700:400}}>{t.contact}{t.due?" · "+t.due:""}{t.zeit?" "+t.zeit:""}{overdue?" · Überfällig":(dueSoon?" · Bald fällig":"")}</div></div>
     <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}><Badge label={t.priority} color={PRIO_C[t.priority]}/><button onClick={()=>del(t.id)} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:0}}>🗑</button></div>
   </div>;};
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -453,7 +511,13 @@ function Tasks({tasks,setTasks,contacts,setActivities}){
     <Sheet open={sheet} onClose={()=>setSheet(false)} title="Neue Aufgabe">
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
         <Field label="Titel *" value={form.title} onChange={ff("title")} placeholder="Aufgabe beschreiben…"/>
-        <Field label="Fällig am" value={form.due} onChange={ff("due")} placeholder="20.06.2026"/>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:10}}>
+          <Field label="Fällig am" value={form.due} onChange={ff("due")} placeholder="20.06.2026"/>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Uhrzeit</label>
+            <input type="time" value={form.zeit} onChange={ff("zeit")} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 10px",outline:"none",width:"100%",boxSizing:"border-box"}}/>
+          </div>
+        </div>
         <div style={{display:"flex",flexDirection:"column",gap:5}}>
           <label style={{fontSize:11,color:C.textSub,fontWeight:600,textTransform:"uppercase"}}>Kontakt</label>
           <select value={form.contact} onChange={ff("contact")} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:15,padding:"13px 14px"}}>{contacts.map(c=><option key={c.id}>{c.name}</option>)}</select>
@@ -984,7 +1048,7 @@ function App(){
       {view==="contacts"&&<Contacts contacts={contacts} setContacts={setContacts} setActivities={setActivities} openContactId={viewParam} goTo={goTo}/>}
       {view==="tasks"&&<Tasks tasks={tasks} setTasks={setTasks} contacts={contacts} setActivities={setActivities}/>}
       {view==="docs"&&<Docs contacts={contacts} goTo={goTo} openDocFilter={viewParam}/>}
-      {view==="calendar"&&<WeekCalendar tasks={tasks} contacts={contacts} goTo={goTo}/>}
+      {view==="calendar"&&<WeekCalendar tasks={tasks} setTasks={setTasks} contacts={contacts} setActivities={setActivities} goTo={goTo}/>}
     </div>
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.surface,borderTop:"1px solid "+C.border,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
       {NAV.map(n=><button key={n.id} onClick={()=>setView(n.id)} style={{flex:1,background:"transparent",border:"none",padding:"12px 4px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",borderTop:view===n.id?"2px solid "+C.accent:"2px solid transparent"}}>
