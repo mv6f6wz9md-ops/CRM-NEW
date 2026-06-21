@@ -23,6 +23,8 @@ select,input,button,textarea{font-family:inherit}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script type="text/babel">
 const {useState,useEffect,useRef,Fragment}=React;
 const C={bg:"#0d0f14",surface:"#161a23",card:"#1c2130",border:"#252d3d",accent:"#4f8ef7",accentDim:"#1a2f5e",green:"#34c47c",amber:"#f5a623",red:"#e05c5c",muted:"#5a6480",text:"#e8eaf2",textSub:"#8b93b0"};
@@ -85,6 +87,87 @@ function getWeekDays(refDate){
 
 function lsGet(key,fallback){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
 function lsSet(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
+
+// ── Firebase Cloud Sync ─────────────────────────────────────────────────────
+const firebaseConfig={
+  apiKey:"AIzaSyAI69K7RR6Lnr9xnh1mc4OZqX-_Or5im8w",
+  authDomain:"crm-1e71a.firebaseapp.com",
+  projectId:"crm-1e71a",
+  storageBucket:"crm-1e71a.firebasestorage.app",
+  messagingSenderId:"1091231895146",
+  appId:"1:1091231895146:web:60b1a047629e734a19c413"
+};
+
+let fbApp=null,fbDb=null,fbEnabled=false;
+function getSyncDeviceId(){
+  let id=lsGet("crm:deviceId",null);
+  if(!id){id="device_"+uid()+"_"+Date.now();lsSet("crm:deviceId",id);}
+  return id;
+}
+function getSyncCode(){return lsGet("crm:syncCode",null);}
+function setSyncCode(code){lsSet("crm:syncCode",code);}
+
+function initFirebase(){
+  if(fbApp) return true;
+  try{
+    if(!window.firebase) return false;
+    fbApp=firebase.initializeApp(firebaseConfig);
+    fbDb=firebase.firestore();
+    fbEnabled=true;
+    return true;
+  }catch(e){console.error("Firebase init error",e);return false;}
+}
+
+// Pushes all local data to Firestore under the given sync code
+async function pushToCloud(syncCode){
+  if(!initFirebase()) throw new Error("Firebase nicht verfügbar");
+  const data={
+    contacts:lsGet("crm:contacts",[]),
+    tasks:lsGet("crm:tasks",[]),
+    activities:lsGet("crm:activities",[]),
+    docs:lsGet("crm:docs",[]),
+    settings:lsGet("crm:settings",{}),
+    bausteine:lsGet("crm:bausteine",[]),
+    updatedAt:Date.now(),
+    updatedBy:getSyncDeviceId(),
+  };
+  await fbDb.collection("clientos_sync").doc(syncCode).set(data);
+  return data;
+}
+
+// Pulls data from Firestore and overwrites local storage
+async function pullFromCloud(syncCode){
+  if(!initFirebase()) throw new Error("Firebase nicht verfügbar");
+  const doc=await fbDb.collection("clientos_sync").doc(syncCode).get();
+  if(!doc.exists) return null;
+  const data=doc.data();
+  if(data.contacts) lsSet("crm:contacts",data.contacts);
+  if(data.tasks) lsSet("crm:tasks",data.tasks);
+  if(data.activities) lsSet("crm:activities",data.activities);
+  if(data.docs) lsSet("crm:docs",data.docs);
+  if(data.settings) lsSet("crm:settings",data.settings);
+  if(data.bausteine) lsSet("crm:bausteine",data.bausteine);
+  return data;
+}
+
+// Subscribe to realtime changes from other devices
+function subscribeToCloud(syncCode,onUpdate){
+  if(!initFirebase()) return ()=>{};
+  const myDeviceId=getSyncDeviceId();
+  return fbDb.collection("clientos_sync").doc(syncCode).onSnapshot(snap=>{
+    if(!snap.exists) return;
+    const data=snap.data();
+    if(data.updatedBy===myDeviceId) return; // ignore our own writes
+    if(data.contacts) lsSet("crm:contacts",data.contacts);
+    if(data.tasks) lsSet("crm:tasks",data.tasks);
+    if(data.activities) lsSet("crm:activities",data.activities);
+    if(data.docs) lsSet("crm:docs",data.docs);
+    if(data.settings) lsSet("crm:settings",data.settings);
+    if(data.bausteine) lsSet("crm:bausteine",data.bausteine);
+    onUpdate&&onUpdate(data);
+  },err=>console.error("Sync listener error",err));
+}
+
 function nextDocNumber(docs,type){
   const year=new Date().getFullYear();
   const prefix=DOC_PREFIX[type]||type;
@@ -991,6 +1074,111 @@ function Docs({contacts,goTo,openDocFilter}){
   </div>;
 }
 
+// ── SyncSettings ─────────────────────────────────────────────────────────────
+function SyncSettings({syncCode,setSyncCodeState,onClose,onReload,showToast}){
+  const [mode,setMode]=useState(syncCode?"connected":"choose"); // choose | create | join | connected
+  const [inputCode,setInputCode]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+
+  const genCode=()=>{
+    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let c="";
+    for(let i=0;i<6;i++) c+=chars[Math.floor(Math.random()*chars.length)];
+    return c;
+  };
+
+  const createNew=async()=>{
+    setBusy(true);setError("");
+    try{
+      const code=genCode();
+      await pushToCloud(code);
+      setSyncCode(code);
+      setSyncCodeState(code);
+      setMode("connected");
+      showToast("☁️ Sync aktiviert!");
+    }catch(e){setError("Verbindung fehlgeschlagen. Prüfe deine Internetverbindung.");}
+    setBusy(false);
+  };
+
+  const joinExisting=async()=>{
+    if(!inputCode.trim()||inputCode.trim().length<4){setError("Bitte gültigen Code eingeben.");return;}
+    setBusy(true);setError("");
+    try{
+      const code=inputCode.trim().toUpperCase();
+      const data=await pullFromCloud(code);
+      if(!data){setError("Code nicht gefunden. Bitte prüfen.");setBusy(false);return;}
+      setSyncCode(code);
+      setSyncCodeState(code);
+      onReload&&onReload();
+      setMode("connected");
+      showToast("☁️ Daten übernommen & verbunden!");
+    }catch(e){setError("Verbindung fehlgeschlagen. Prüfe deine Internetverbindung.");}
+    setBusy(false);
+  };
+
+  const disconnect=()=>{
+    setSyncCode(null);
+    setSyncCodeState(null);
+    setMode("choose");
+    showToast("☁️ Sync getrennt");
+  };
+
+  return(
+    <Screen open={true} onClose={onClose} title="Cloud-Synchronisierung">
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        {mode==="connected"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{background:C.green+"15",border:"1px solid "+C.green+"44",borderRadius:14,padding:18,textAlign:"center"}}>
+              <div style={{fontSize:32,marginBottom:8}}>☁️✓</div>
+              <div style={{color:C.text,fontWeight:700,fontSize:16,marginBottom:4}}>Synchronisierung aktiv</div>
+              <div style={{color:C.textSub,fontSize:13}}>Dein Sync-Code:</div>
+              <div style={{fontSize:24,fontWeight:900,color:C.green,letterSpacing:3,marginTop:6,fontFamily:"monospace"}}>{syncCode}</div>
+            </div>
+            <div style={{fontSize:13,color:C.textSub,lineHeight:1.6,background:C.card,borderRadius:10,padding:14}}>
+              📱 Gib diesen Code auf deinem anderen Gerät (z.B. iPad) unter ☁️ → "Vorhandenen Code verwenden" ein, um beide Geräte zu verbinden. Änderungen werden danach automatisch zwischen beiden Geräten synchronisiert.
+            </div>
+            <Btn onClick={disconnect} variant="danger" full>Synchronisierung trennen</Btn>
+          </div>
+        )}
+
+        {mode==="choose"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:13,color:C.textSub,lineHeight:1.6}}>
+              Verbinde mehrere Geräte (z.B. iPhone & iPad), damit Kontakte, Aufgaben und Belege überall synchron sind.
+            </div>
+            <Btn onClick={()=>setMode("create")} full>📱 Neue Synchronisierung starten</Btn>
+            <Btn onClick={()=>setMode("join")} variant="ghost" full>🔗 Vorhandenen Code verwenden</Btn>
+          </div>
+        )}
+
+        {mode==="create"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:13,color:C.textSub,lineHeight:1.6}}>
+              Auf diesem Gerät wird ein neuer Sync-Code erstellt. Verbinde dein zweites Gerät später mit diesem Code.
+            </div>
+            {error&&<div style={{color:C.red,fontSize:13,background:C.red+"15",borderRadius:10,padding:"10px 14px"}}>{error}</div>}
+            <Btn onClick={createNew} disabled={busy} full>{busy?"⏳ Wird erstellt…":"Code erstellen & aktivieren"}</Btn>
+            <Btn onClick={()=>setMode("choose")} variant="ghost" full>Zurück</Btn>
+          </div>
+        )}
+
+        {mode==="join"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:13,color:C.textSub,lineHeight:1.6}}>
+              Gib den Sync-Code ein, der auf deinem anderen Gerät angezeigt wird. Achtung: Die aktuellen Daten auf diesem Gerät werden dabei durch die Cloud-Daten ersetzt.
+            </div>
+            <input value={inputCode} onChange={e=>setInputCode(e.target.value.toUpperCase())} placeholder="z.B. AB3X7K" style={{background:C.surface,border:"1px solid "+C.border,borderRadius:10,color:C.text,fontFamily:"monospace",fontSize:20,fontWeight:700,letterSpacing:3,padding:"14px",outline:"none",textAlign:"center"}}/>
+            {error&&<div style={{color:C.red,fontSize:13,background:C.red+"15",borderRadius:10,padding:"10px 14px"}}>{error}</div>}
+            <Btn onClick={joinExisting} disabled={busy} full>{busy?"⏳ Verbinde…":"Verbinden & übernehmen"}</Btn>
+            <Btn onClick={()=>setMode("choose")} variant="ghost" full>Zurück</Btn>
+          </div>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 const NAV=[{id:"dashboard",label:"Home",icon:"⬛"},{id:"contacts",label:"Kontakte",icon:"👤"},{id:"tasks",label:"Aufgaben",icon:"✅"},{id:"docs",label:"Dokumente",icon:"📄"},{id:"calendar",label:"Kalender",icon:"📅"}];
 const VIEWS={dashboard:"Dashboard",contacts:"Kontakte",tasks:"Aufgaben",docs:"Dokumente",calendar:"Kalender"};
@@ -1005,9 +1193,37 @@ function App(){
   const fileRef=useRef(null);
   const [toast,setToast]=useState("");
   const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(""),3000);};
-  const setContacts=val=>{const n=typeof val==="function"?val(contacts):val;setContactsRaw(n);lsSet("crm:contacts",n);};
-  const setTasks=val=>{const n=typeof val==="function"?val(tasks):val;setTasksRaw(n);lsSet("crm:tasks",n);};
-  const setActivities=val=>{const n=typeof val==="function"?val(activities):val;setActivitiesRaw(n);lsSet("crm:activities",n);};
+  const [syncCode,setSyncCodeState]=useState(()=>getSyncCode());
+  const [syncStatus,setSyncStatus]=useState("idle"); // idle | syncing | synced | error
+  const [showSync,setShowSync]=useState(false);
+  const pushTimer=useRef(null);
+
+  const schedulePush=()=>{
+    if(!syncCode) return;
+    if(pushTimer.current) clearTimeout(pushTimer.current);
+    setSyncStatus("syncing");
+    pushTimer.current=setTimeout(()=>{
+      pushToCloud(syncCode).then(()=>setSyncStatus("synced")).catch(()=>setSyncStatus("error"));
+    },800);
+  };
+
+  const setContacts=val=>{const n=typeof val==="function"?val(contacts):val;setContactsRaw(n);lsSet("crm:contacts",n);schedulePush();};
+  const setTasks=val=>{const n=typeof val==="function"?val(tasks):val;setTasksRaw(n);lsSet("crm:tasks",n);schedulePush();};
+  const setActivities=val=>{const n=typeof val==="function"?val(activities):val;setActivitiesRaw(n);lsSet("crm:activities",n);schedulePush();};
+
+  // Reload all state from localStorage (used after a cloud pull/update)
+  const reloadFromStorage=()=>{
+    setContactsRaw(lsGet("crm:contacts",DEF_CONTACTS));
+    setTasksRaw(lsGet("crm:tasks",DEF_TASKS));
+    setActivitiesRaw(lsGet("crm:activities",DEF_ACT));
+  };
+
+  // Subscribe to realtime cloud updates when syncCode is set
+  useEffect(()=>{
+    if(!syncCode) return;
+    const unsub=subscribeToCloud(syncCode,()=>{reloadFromStorage();showToast("🔄 Synchronisiert");});
+    return unsub;
+  },[syncCode]);
   const exportData=()=>{
     const data={contacts,tasks,activities,docs:lsGet("crm:docs",[]),settings:lsGet("crm:settings",{}),bausteine:lsGet("crm:bausteine",[]),exportedAt:new Date().toISOString()};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
@@ -1033,10 +1249,12 @@ function App(){
     };
     reader.readAsText(file);e.target.value="";
   };
+  if(showSync) return <SyncSettings syncCode={syncCode} setSyncCodeState={setSyncCodeState} onClose={()=>setShowSync(false)} onReload={reloadFromStorage} showToast={showToast}/>;
   return <div style={{minHeight:"100dvh",background:C.bg,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
     <div style={{background:C.surface,borderBottom:"1px solid "+C.border,paddingTop:"calc(env(safe-area-inset-top) + 14px)",paddingBottom:"14px",paddingLeft:"20px",paddingRight:"20px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
       <div><div style={{fontWeight:900,fontSize:18,color:C.text,letterSpacing:-.5}}><span style={{color:C.accent}}>▸</span> ClientOS</div><div style={{fontSize:11,color:C.muted}}>{VIEWS[view]}</div></div>
       <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <button onClick={()=>setShowSync(true)} title="Cloud-Synchronisierung" style={{background:C.card,border:"1px solid "+(syncCode?C.green+"66":C.border),borderRadius:10,color:syncCode?C.green:C.textSub,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"8px 12px",cursor:"pointer"}}>{syncCode?(syncStatus==="syncing"?"🔄":"☁️"):"☁️"}</button>
         <button onClick={exportData} title="Exportieren" style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,color:C.green,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"8px 12px",cursor:"pointer"}}>⬆️</button>
         <button onClick={()=>fileRef.current&&fileRef.current.click()} title="Importieren" style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,color:C.accent,fontFamily:"inherit",fontWeight:700,fontSize:13,padding:"8px 12px",cursor:"pointer"}}>⬇️</button>
         <input ref={fileRef} type="file" accept=".json" onChange={importData} style={{display:"none"}}/>
