@@ -1125,7 +1125,7 @@ function SyncSettings({syncCode,setSyncCodeState,onClose,onReload,showToast}){
   };
 
   return(
-    <Screen open={true} onClose={onClose} title="Cloud-Synchronisierung">
+    <Sheet open={true} onClose={onClose} title="Cloud-Synchronisierung">
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         {mode==="connected"&&(
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -1175,7 +1175,7 @@ function SyncSettings({syncCode,setSyncCodeState,onClose,onReload,showToast}){
           </div>
         )}
       </div>
-    </Screen>
+    </Sheet>
   );
 }
 
