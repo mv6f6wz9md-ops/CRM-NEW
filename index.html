@@ -125,9 +125,14 @@ function initFirebase(){
 }
 
 // Pushes all local data to Firestore under the given sync code
+function sanitizeForFirestore(obj){
+  // Round-trip through JSON to strip undefined values and normalize nested structures
+  return JSON.parse(JSON.stringify(obj));
+}
+
 async function pushToCloud(syncCode){
   initFirebase();
-  const data={
+  const raw={
     contacts:lsGet("crm:contacts",[]),
     tasks:lsGet("crm:tasks",[]),
     activities:lsGet("crm:activities",[]),
@@ -137,6 +142,12 @@ async function pushToCloud(syncCode){
     updatedAt:Date.now(),
     updatedBy:getSyncDeviceId(),
   };
+  let data=sanitizeForFirestore(raw);
+  // Firestore has ~1MB doc size limit. If logo pushes us over, drop it from sync (keep locally).
+  const estSize=JSON.stringify(data).length;
+  if(estSize>900000 && data.settings && data.settings.logo){
+    data=Object.assign({},data,{settings:Object.assign({},data.settings,{logo:""})});
+  }
   await fbDb.collection("clientos_sync").doc(syncCode).set(data);
   return data;
 }
