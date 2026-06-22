@@ -109,18 +109,24 @@ function setSyncCode(code){lsSet("crm:syncCode",code);}
 
 function initFirebase(){
   if(fbApp) return true;
+  if(!window.firebase){
+    console.error("Firebase SDK not loaded (window.firebase undefined)");
+    throw new Error("Firebase SDK konnte nicht geladen werden (kein Internet?)");
+  }
   try{
-    if(!window.firebase) return false;
     fbApp=firebase.initializeApp(firebaseConfig);
     fbDb=firebase.firestore();
     fbEnabled=true;
     return true;
-  }catch(e){console.error("Firebase init error",e);return false;}
+  }catch(e){
+    console.error("Firebase init error",e);
+    throw e;
+  }
 }
 
 // Pushes all local data to Firestore under the given sync code
 async function pushToCloud(syncCode){
-  if(!initFirebase()) throw new Error("Firebase nicht verfügbar");
+  initFirebase();
   const data={
     contacts:lsGet("crm:contacts",[]),
     tasks:lsGet("crm:tasks",[]),
@@ -137,7 +143,7 @@ async function pushToCloud(syncCode){
 
 // Pulls data from Firestore and overwrites local storage
 async function pullFromCloud(syncCode){
-  if(!initFirebase()) throw new Error("Firebase nicht verfügbar");
+  initFirebase();
   const doc=await fbDb.collection("clientos_sync").doc(syncCode).get();
   if(!doc.exists) return null;
   const data=doc.data();
@@ -152,7 +158,7 @@ async function pullFromCloud(syncCode){
 
 // Subscribe to realtime changes from other devices
 function subscribeToCloud(syncCode,onUpdate){
-  if(!initFirebase()) return ()=>{};
+  try{initFirebase();}catch(e){console.error(e);return ()=>{};}
   const myDeviceId=getSyncDeviceId();
   return fbDb.collection("clientos_sync").doc(syncCode).onSnapshot(snap=>{
     if(!snap.exists) return;
@@ -1097,7 +1103,10 @@ function SyncSettings({syncCode,setSyncCodeState,onClose,onReload,showToast}){
       setSyncCodeState(code);
       setMode("connected");
       showToast("☁️ Sync aktiviert!");
-    }catch(e){setError("Verbindung fehlgeschlagen. Prüfe deine Internetverbindung.");}
+    }catch(e){
+      console.error("Sync createNew error:",e);
+      setError("Fehler: "+(e&&e.message?e.message:String(e)));
+    }
     setBusy(false);
   };
 
@@ -1113,7 +1122,10 @@ function SyncSettings({syncCode,setSyncCodeState,onClose,onReload,showToast}){
       onReload&&onReload();
       setMode("connected");
       showToast("☁️ Daten übernommen & verbunden!");
-    }catch(e){setError("Verbindung fehlgeschlagen. Prüfe deine Internetverbindung.");}
+    }catch(e){
+      console.error("Sync joinExisting error:",e);
+      setError("Fehler: "+(e&&e.message?e.message:String(e)));
+    }
     setBusy(false);
   };
 
