@@ -139,14 +139,19 @@ function sanitizeForFirestore(obj){
   return JSON.parse(JSON.stringify(obj));
 }
 
-async function pushToCloud(syncCode){
+function pushToCloud(syncCode){return _pushToCloudImpl(syncCode,false);}
+function pushSettingsToCloud(syncCode){return _pushToCloudImpl(syncCode,true);}
+
+async function _pushToCloudImpl(syncCode,settingsOnly){
   await initFirebase();
+  const settingsTs=lsGet("crm:settingsTs",0);
   const raw={
     contacts:lsGet("crm:contacts",[]),
     tasks:lsGet("crm:tasks",[]),
     activities:lsGet("crm:activities",[]),
     docs:lsGet("crm:docs",[]),
     settings:lsGet("crm:settings",{}),
+    settingsTs:settingsTs,
     bausteine:lsGet("crm:bausteine",[]),
     updatedAt:Date.now(),
     updatedBy:getSyncDeviceId(),
@@ -156,7 +161,22 @@ async function pushToCloud(syncCode){
   if(data.settings && data.settings.logo){
     data=Object.assign({},data,{settings:Object.assign({},data.settings,{logo:""})});
   }
-  await fbDb.collection("clientos_sync").doc(syncCode).set(data);
+  const docRef=fbDb.collection("clientos_sync").doc(syncCode);
+  if(settingsOnly){
+    // Only touch the settings + settingsTs fields, leave everything else untouched server-side
+    await docRef.set({settings:data.settings,settingsTs:data.settingsTs,updatedAt:data.updatedAt,updatedBy:data.updatedBy},{merge:true});
+  } else {
+    // Merge write: never blindly overwrite settings/settingsTs with a possibly-stale local copy
+    const existing=await docRef.get();
+    const remoteSettingsTs=existing.exists?(existing.data().settingsTs||0):0;
+    const payload=Object.assign({},data);
+    if(remoteSettingsTs>settingsTs){
+      // Remote settings are newer than what we have locally: don't overwrite them
+      delete payload.settings;
+      delete payload.settingsTs;
+    }
+    await docRef.set(payload,{merge:true});
+  }
   return data;
 }
 
@@ -171,10 +191,16 @@ async function pullFromCloud(syncCode){
   if(data.activities) lsSet("crm:activities",data.activities);
   if(data.docs) lsSet("crm:docs",data.docs);
   if(data.settings){
-    const localLogo=(lsGet("crm:settings",{})||{}).logo||"";
-    lsSet("crm:settings",Object.assign({},data.settings,{logo:data.settings.logo||localLogo}));
+    const localTs=lsGet("crm:settingsTs",0);
+    const remoteTs=data.settingsTs||0;
+    if(remoteTs>=localTs){
+      const localLogo=(lsGet("crm:settings",{})||{}).logo||"";
+      lsSet("crm:settings",Object.assign({},data.settings,{logo:data.settings.logo||localLogo}));
+      lsSet("crm:settingsTs",remoteTs);
+    }
   }
   if(data.bausteine) lsSet("crm:bausteine",data.bausteine);
+  window.dispatchEvent(new Event("clientos:synced"));
   return data;
 }
 
@@ -194,10 +220,16 @@ function subscribeToCloud(syncCode,onUpdate){
       if(data.activities) lsSet("crm:activities",data.activities);
       if(data.docs) lsSet("crm:docs",data.docs);
       if(data.settings){
-        const localLogo=(lsGet("crm:settings",{})||{}).logo||"";
-        lsSet("crm:settings",Object.assign({},data.settings,{logo:data.settings.logo||localLogo}));
+        const localTs=lsGet("crm:settingsTs",0);
+        const remoteTs=data.settingsTs||0;
+        if(remoteTs>=localTs){
+          const localLogo=(lsGet("crm:settings",{})||{}).logo||"";
+          lsSet("crm:settings",Object.assign({},data.settings,{logo:data.settings.logo||localLogo}));
+          lsSet("crm:settingsTs",remoteTs);
+        }
       }
       if(data.bausteine) lsSet("crm:bausteine",data.bausteine);
+      window.dispatchEvent(new Event("clientos:synced"));
       onUpdate&&onUpdate(data);
     },err=>console.error("Sync listener error",err));
   }).catch(e=>console.error("subscribeToCloud init error",e));
@@ -1006,7 +1038,11 @@ function DocPreview({doc,contacts,settings,onBack}){
         {doc.notiz&&<div style={{margin:"0 20px 16px",background:"#f8f8f8",borderLeft:"3px solid "+DOC_GREEN,padding:"9px 12px",fontSize:11,color:"#444",lineHeight:1.5,whiteSpace:"pre-line"}}>{doc.notiz}</div>}
         <div style={{textAlign:"right",padding:"8px 20px 16px"}}>{s.signature?<img src={s.signature} alt="Unterschrift" style={{height:36,maxWidth:160,objectFit:"contain"}}/>:<div style={{height:30}}/>}<div style={{borderTop:"1px solid #555",width:80,marginLeft:"auto",paddingTop:4,fontSize:10,color:"#555"}}>{s.inhaber||s.firma}</div></div>
         {s.agb&&<div style={{borderTop:"1px solid #eee",padding:"12px 20px",fontSize:10,color:"#666",lineHeight:1.5}}><div style={{fontWeight:800,textTransform:"uppercase",color:DOC_GREEN,letterSpacing:.5,marginBottom:4,fontSize:9}}>Allgemeine Geschäftsbedingungen</div><div style={{whiteSpace:"pre-line"}}>{s.agb}</div></div>}
-        <div style={{background:DOC_GREEN,color:"rgba(255,255,255,.9)",padding:"10px 20px",fontSize:10,textAlign:"center",letterSpacing:.4,fontWeight:600}}>VIELEN DANK FÜR IHR VERTRAUEN</div>
+        {(s.iban||s.bank||s.steuernr||s.ustid)&&<div style={{padding:"6px 20px 0",fontSize:9,color:"#666",lineHeight:1.5}}>
+          {(s.iban||s.bank)&&<div>{[s.bank,s.iban?"IBAN: "+s.iban:null,s.bic?"BIC: "+s.bic:null].filter(Boolean).join(" · ")}</div>}
+          {(s.steuernr||s.ustid)&&<div>{[s.steuernr?"St.-Nr.: "+s.steuernr:null,s.ustid?"USt-ID: "+s.ustid:null].filter(Boolean).join(" · ")}</div>}
+        </div>}
+        <div style={{background:DOC_GREEN,color:"rgba(255,255,255,.9)",padding:"10px 20px",fontSize:10,textAlign:"center",letterSpacing:.4,fontWeight:600,marginTop:10}}>VIELEN DANK FÜR IHR VERTRAUEN</div>
       </div>
     </div>
   </div>;
@@ -1017,6 +1053,17 @@ function Docs({contacts,goTo,openDocFilter}){
   const [docs,setDocsRaw]=useState(()=>lsGet("crm:docs",[]));
   const [settings,setSettingsRaw]=useState(()=>lsGet("crm:settings",DEF_SETTINGS));
   const [search,setSearch]=useState("");
+  const settingsSavingRef=useRef(false);
+
+  useEffect(()=>{
+    const onSyncUpdate=()=>{
+      if(settingsSavingRef.current) return; // don't clobber an in-flight local edit
+      setSettingsRaw(lsGet("crm:settings",DEF_SETTINGS));
+      setDocsRaw(lsGet("crm:docs",[]));
+    };
+    window.addEventListener("clientos:synced",onSyncUpdate);
+    return ()=>window.removeEventListener("clientos:synced",onSyncUpdate);
+  },[]);
 
   useEffect(()=>{
     if(openDocFilter&&openDocFilter.openDocId){
@@ -1025,7 +1072,16 @@ function Docs({contacts,goTo,openDocFilter}){
     }
   },[openDocFilter]);
   const saveDocs=val=>{const n=typeof val==="function"?val(docs):val;setDocsRaw(n);lsSet("crm:docs",n);};
-  const saveSettings=val=>{const n=typeof val==="function"?val(settings):val;setSettingsRaw(n);lsSet("crm:settings",n);};
+  const saveSettings=val=>{
+    settingsSavingRef.current=true;
+    const n=typeof val==="function"?val(settings):val;
+    setSettingsRaw(n);
+    lsSet("crm:settings",n);
+    lsSet("crm:settingsTs",Date.now());
+    const sc=getSyncCode();
+    if(sc){pushSettingsToCloud(sc).catch(e=>console.error("settings push error",e)).finally(()=>{settingsSavingRef.current=false;});}
+    else{settingsSavingRef.current=false;}
+  };
   const handleSave=form=>{saveDocs(p=>[Object.assign({},form,{id:uid(),created:today()}),...p]);setScreen(null);};
   const handleEditSave=(originalId)=>form=>{
     saveDocs(p=>p.map(d=>d.id===originalId?Object.assign({},d,form):d));
