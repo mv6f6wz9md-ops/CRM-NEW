@@ -321,12 +321,12 @@ function Field({label,value,onChange,placeholder}){
 }
 function Sheet({open,onClose,title,children}){
   if(!open) return null;
-  return <div style={{position:"fixed",inset:0,height:"100dvh",zIndex:200,background:C.bg,display:"flex",flexDirection:"column",overflowY:"auto"}}>
-    <div style={{background:C.surface,borderBottom:"1px solid "+C.border,paddingTop:"calc(env(safe-area-inset-top) + 65px)",paddingBottom:"12px",paddingLeft:"16px",paddingRight:"16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10,flexShrink:0}}>
+  return <div style={{position:"fixed",inset:0,height:"100dvh",zIndex:200,background:C.bg,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    <div style={{background:C.surface,borderBottom:"1px solid "+C.border,paddingTop:"calc(env(safe-area-inset-top) + 14px)",paddingBottom:"12px",paddingLeft:"16px",paddingRight:"16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
       <span style={{fontWeight:800,fontSize:17,color:C.text,flex:1,marginRight:12}}>{title}</span>
       <button onClick={onClose} style={{background:C.card,border:"1px solid "+C.border,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,padding:"9px 16px",borderRadius:10,whiteSpace:"nowrap"}}>✕ Schließen</button>
     </div>
-    <div style={{padding:"20px 16px calc(env(safe-area-inset-bottom) + 40px)"}}>{children}</div>
+    <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"20px 16px calc(env(safe-area-inset-bottom) + 40px)"}}>{children}</div>
   </div>;
 }
 
